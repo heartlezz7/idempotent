@@ -1,0 +1,143 @@
+# =============================================================================
+# Secrets & local config
+# =============================================================================
+.env
+.env.*
+!.env.example
+.envrc.local
+.direnv/
+config.local.yaml
+config.local.yml
+*.pem
+*.key
+credentials.json
+
+# =============================================================================
+# Go binaries & compiled output
+# =============================================================================
+# Compiled binary named after the module dir (adjust to your binary name)
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.a
+
+# Test binary produced by `go test -c`
+*.test
+
+# Output of `go build -o`, profiles, coverage
+*.out
+coverage.out
+coverage.html
+cover.out
+profile.cov
+*.prof
+*.pprof
+*.cpu
+*.mem
+
+# =============================================================================
+# Go modules & workspace
+# =============================================================================
+# go.mod and go.sum MUST be committed — do not add them here.
+go.work
+go.work.sum
+
+# Vendored deps — uncomment ONLY if you don't vendor deliberately
+# vendor/
+
+# =============================================================================
+# Go tooling
+# =============================================================================
+# air / fresh / realize (live reload)
+tmp/
+.air.toml.local
+
+# golangci-lint
+.golangci-lint-cache/
+
+# GoReleaser
+dist/
+.goreleaser.local.yml
+
+# delve
+__debug_bin
+__debug_bin*
+debug
+debug.test
+
+# gotestsum / test artifacts
+*.junit.xml
+gotestsum.json
+
+# mockery / wire / sqlc generated caches (keep generated .go files committed)
+.mockery.local.yaml
+
+# =============================================================================
+# Frameworks / runtime artifacts
+# =============================================================================
+# Gin / Echo / Fiber / Chi — uploaded files, session, static build
+/uploads/
+/storage/
+/public/build/
+/web/dist/
+/frontend/node_modules/
+/frontend/dist/
+
+# Buffalo
+.grifter.yml
+/public/assets/
+node_modules/
+
+# Cobra/Viper local overrides
+.cobra.yaml
+.<appname>.yaml
+
+# Embedded/generated assets you regenerate at build time
+# (remove if you commit them)
+# *_gen.go
+# *.pb.go
+
+# =============================================================================
+# Databases & migrations local state
+# =============================================================================
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+/data/
+
+# =============================================================================
+# Docker / local infra
+# =============================================================================
+docker-compose.override.yml
+.docker/
+
+# =============================================================================
+# Logs & temp
+# =============================================================================
+*.log
+logs/
+*.tmp
+*.bak
+*.orig
+*.pid
+
+# =============================================================================
+# Editors & OS
+# =============================================================================
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.swp
+*.swo
+.DS_Store
+._*
+Thumbs.db
