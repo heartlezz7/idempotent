@@ -17,6 +17,17 @@ make test    # the full experiment suite (needs curl + jq)
 
 `make down` wipes the volume. `POST /_reset` truncates without restarting.
 
+### Or run it in Docker
+
+```bash
+./scripts/cli.sh up       # build the app image, start db + app, wait for db healthy
+./scripts/cli.sh logs     # follow app logs
+./scripts/cli.sh shell    # shell into the running app container
+./scripts/cli.sh down     # stop everything (keeps the db volume)
+```
+
+`db` and `app` are wired together on the compose network — `app` reaches Postgres at `db:5432`. See `docker-compose.yml` for the exact env and `Dockerfile` for the image build.
+
 ## Why two resources
 
 They demonstrate different mechanisms, and picking the right one is most of the job.
@@ -48,7 +59,7 @@ Lab controls: `GET /_stats`, `POST /_reset`, `POST /_sweep`, `POST /_expire_keys
 
 ## The middleware
 
-`internal/idem/middleware.go`. `POST /safe/users` and `POST /naive/users` run the **same handler function** — the only difference is the middleware in front. That is the design goal: business logic stays unaware of idempotency.
+`src/route/middleware/idempotent.go`. `POST /safe/users` and `POST /naive/users` run the **same handler function** — the only difference is the middleware in front. That is the design goal: business logic stays unaware of idempotency.
 
 The handler cooperates on exactly one thing: it writes through `idem.DBFrom(c, pool)`, which returns the middleware's transaction when there is one. That is what puts the effect and the receipt in the same commit.
 
@@ -105,6 +116,6 @@ curl -s localhost:8080/_stats | jq .users_live   # 2 — the 500 still committed
 
 ## Your schema
 
-Both fields in the `user` sample were tagged `db:"id"`, so a struct-scanning library would read the id column twice and never populate `Name`. Fixed in `internal/model/model.go`, where `Name` is tagged `db:"name"`. Types were also omitted — `ID` is `string` (uuid) and `Age` is `int`.
+Both fields in the `user` sample were tagged `db:"id"`, so a struct-scanning library would read the id column twice and never populate `Name`. Fixed in `src/model/user.go`, where `Name` is tagged `db:"name"`. Types were also omitted — `ID` is `string` (uuid) and `Age` is `int`.
 
 `version` was added to both structs. It backs `ETag`/`If-Match`, which is how you get concurrency safety — idempotency alone does nothing against two *different* clients writing at once.
