@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The contract, hop by hop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Newsreader:opsz,wght@6..72,400;6..72,500&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#E4E2DA; --paper-2:#EFEDE7; --ink:#14161A; --slate:#4A525C;
+  --wash:#CFCCC2; --stamp:#B3382C; --seal:#1F5D50; --amber:#8A6212;
+  /* one hue per lane, so an arrow's colour tells you who is speaking */
+  --l0:#55407E;  /* client     — violet  */
+  --l1:#2A5D8F;  /* transport  — steel   */
+  --l2:#8A6212;  /* proxy      — ochre   */
+  --l3:#B3382C;  /* middleware — red     */
+  --l4:#7A4A2E;  /* handler    — sienna  */
+  --l5:#1F5D50;  /* postgres   — pine    */
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --disp:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"Newsreader",Georgia,serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--body);font-size:17px;line-height:1.6;
+  background-image:radial-gradient(var(--wash) .5px,transparent .5px);background-size:22px 22px}
+.wrap{max-width:1140px;margin:0 auto;padding:0 22px 90px}
+h1,h2,h3,.eyebrow,.lbl,.btn{font-family:var(--disp)}
+.eyebrow{font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:var(--slate)}
+h1{font-size:clamp(34px,6.2vw,66px);font-weight:800;line-height:.95;letter-spacing:-.03em;text-transform:uppercase;margin:14px 0 0}
+h1 em{font-style:normal;color:var(--stamp)}
+.deck{font-size:19px;color:var(--slate);max-width:62ch;margin-top:16px}
+p{margin:0 0 12px;max-width:70ch}
+code{font-family:var(--mono);font-size:.86em}
+p code,li code,td code{background:var(--paper-2);border:1px solid var(--wash);border-radius:3px;padding:.05em .35em}
+header{padding:52px 0 22px;border-bottom:2px solid var(--ink)}
+
+/* controls */
+.bar{display:flex;flex-wrap:wrap;gap:14px;align-items:center;padding:12px 14px;
+  border:2px solid var(--ink);border-bottom:0;background:var(--paper-2);margin-top:34px}
+.lbl{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--slate)}
+.seg{display:flex;flex-wrap:wrap;border:1px solid var(--ink)}
+.seg button{font-family:var(--mono);font-size:11px;background:transparent;border:0;
+  border-right:1px solid var(--wash);padding:7px 10px;cursor:pointer;color:var(--slate)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper-2)}
+.nav{display:flex;gap:6px;margin-left:auto;align-items:center}
+.btn{font-family:var(--mono);font-size:11px;border:1px solid var(--ink);background:transparent;
+  padding:6px 12px;cursor:pointer;color:var(--ink)}
+.btn[disabled]{opacity:.3;cursor:default}
+.btn.play{background:var(--stamp);color:#fff;border-color:var(--stamp);font-weight:700;letter-spacing:.1em}
+.counter{font-family:var(--mono);font-size:11px;color:var(--slate);min-width:56px;text-align:center}
+button:focus-visible{outline:2px solid var(--stamp);outline-offset:2px}
+
+/* diagram */
+.stage{border:2px solid var(--ink);background:var(--paper-2);overflow-x:auto}
+svg{display:block;min-width:1120px}
+
+.col-band{fill:var(--ink);opacity:.03}
+.lane-box{fill:var(--paper);stroke:var(--ink);stroke-width:1.5}
+.lane-accent{stroke-width:5}
+.lane-name{font-family:var(--disp);font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.lane-sub{font-family:var(--mono);font-size:8.5px;letter-spacing:.05em;fill:var(--slate)}
+.lifeline{stroke-width:1.2;stroke-dasharray:2 6;opacity:.5}
+
+/* row states: future is dim but still legible, active gets a band */
+.row{opacity:.32;transition:opacity .2s}
+.row.seen{opacity:.9}
+.row.active{opacity:1}
+.band{fill:var(--ink);opacity:0}
+.row.active .band{opacity:.06}
+.bandbar{opacity:0}
+.row.active .bandbar{opacity:1}
+.gutter{font-family:var(--mono);font-size:9.5px;fill:var(--wash)}
+.row.seen .gutter{fill:var(--slate)}
+.row.active .gutter{fill:var(--ink);font-weight:700}
+
+.msg{stroke-width:1.8;fill:none}
+.row.active .msg{stroke-width:3.2}
+.ret{stroke-dasharray:7 4}
+.msg-label{font-family:var(--mono);font-size:11px;font-weight:500}
+.row.active .msg-label{font-weight:700}
+.xmark{stroke:var(--stamp);stroke-width:3}
+.enf-pip{fill:var(--seal)}
+.enf-tag{font-family:var(--disp);font-size:8px;font-weight:800;letter-spacing:.12em;fill:var(--seal)}
+
+.note-band{fill:var(--ink);opacity:.055}
+.note-text{font-family:var(--body);font-size:13px;fill:var(--ink);font-style:italic}
+
+/* lane colours */
+.c0{stroke:var(--l0)} .c1{stroke:var(--l1)} .c2{stroke:var(--l2)}
+.c3{stroke:var(--l3)} .c4{stroke:var(--l4)} .c5{stroke:var(--l5)} .cX{stroke:var(--stamp)}
+.t0{fill:var(--l0)} .t1{fill:var(--l1)} .t2{fill:var(--l2)}
+.t3{fill:var(--l3)} .t4{fill:var(--l4)} .t5{fill:var(--l5)} .tX{fill:var(--stamp)}
+
+/* legend */
+.legend{display:flex;flex-wrap:wrap;gap:18px;padding:9px 14px;
+  border:2px solid var(--ink);border-top:0;border-bottom:0;background:var(--paper);
+  font-family:var(--mono);font-size:10px;color:var(--slate)}
+.legend span{display:flex;align-items:center;gap:6px}
+.sw{width:18px;height:0;border-top:2.5px solid currentColor;display:inline-block}
+.sw.dashed{border-top-style:dashed}
+
+/* readouts */
+.reads{display:grid;grid-template-columns:1.55fr 1fr;border:2px solid var(--ink);border-top:0}
+@media(max-width:820px){.reads{grid-template-columns:1fr}}
+.ann{padding:16px 18px 20px;min-height:220px}
+.ann .who{font-family:var(--disp);font-size:19px;font-weight:800;letter-spacing:-.01em;margin:0 0 10px}
+.ann dl{margin:0;display:grid;grid-template-columns:78px 1fr;gap:7px 12px}
+.ann dt{font-family:var(--disp);font-size:9.5px;font-weight:700;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--slate);padding-top:4px}
+.ann dd{margin:0;font-size:15.5px;line-height:1.45}
+.ann dd.blind{color:var(--stamp)}
+.ledger{border-left:1px solid var(--wash);padding:16px 18px;background:var(--paper)}
+@media(max-width:820px){.ledger{border-left:0;border-top:1px solid var(--wash)}}
+.ledger h3{font-family:var(--disp);font-size:10px;font-weight:700;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--slate);margin:0 0 12px}
+.lrow{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--wash);
+  opacity:.3;transition:opacity .2s}
+.lrow.lit{opacity:1}
+.lrow .tick{font-family:var(--mono);font-size:12px;color:var(--wash);width:14px;flex:none;padding-top:2px}
+.lrow.lit .tick{color:var(--seal)}
+.lrow .k{font-family:var(--disp);font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;display:block}
+.lrow .v{font-family:var(--mono);font-size:11px;color:var(--slate);display:block;line-height:1.4}
+.lrow.enforce.lit{background:rgba(31,93,80,.07);margin:0 -18px;padding:8px 18px}
+.lrow.enforce.lit .k{color:var(--seal)}
+
+/* prose */
+section.block{margin-top:60px;padding-top:6px;border-top:2px solid var(--ink)}
+h2{font-size:clamp(22px,3vw,30px);font-weight:800;letter-spacing:-.02em;margin:18px 0 8px}
+table{border-collapse:collapse;width:100%;font-size:14px;margin:6px 0 18px;font-family:var(--disp)}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--wash);vertical-align:top}
+th{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--slate);border-bottom:1px solid var(--ink)}
+td.y{color:var(--seal);font-weight:700} td.n{color:var(--stamp);font-weight:700} td.m{color:var(--amber);font-weight:700}
+.callout{border-left:3px solid var(--seal);background:var(--paper-2);padding:11px 15px;margin:0 0 16px}
+.callout.warn{border-left-color:var(--stamp)}
+.callout p{margin:0;max-width:none;font-size:15.5px}
+.callout .lbl{display:block;color:var(--seal);margin-bottom:3px}
+.callout.warn .lbl{color:var(--stamp)}
+footer{margin-top:60px;padding-top:16px;border-top:2px solid var(--ink);
+  font-family:var(--mono);font-size:11px;color:var(--slate)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Part three · the contract in motion</div>
+  <h1>Who reads it.<br>Who obeys it.<br><em>Who enforces it.</em></h1>
+  <p class="deck">The method is a declaration made at the client and read by every hop in between. Step through a scenario and watch each layer decide what it is allowed to do — and notice how little any of them can actually verify.</p>
+</header>
+
+<div class="bar">
+  <span class="lbl">Scenario</span>
+  <div class="seg" id="scenSeg"></div>
+  <div class="nav">
+    <button class="btn" id="prev">←</button>
+    <span class="counter" id="counter">1 / 1</span>
+    <button class="btn" id="next">→</button>
+    <button class="btn play" id="play">Play</button>
+  </div>
+</div>
+
+<div class="legend">
+  <span><i class="sw" style="color:var(--slate)"></i> arrow colour = who is speaking</span>
+  <span><i class="sw dashed" style="color:var(--slate)"></i> dashed = a reply</span>
+  <span><i class="sw" style="color:var(--stamp)"></i> failure or duplicate</span>
+  <span style="color:var(--seal)">◆ ENFORCED = the database decides here</span>
+</div>
+<div class="stage"><svg id="svg" role="img" aria-label="Sequence diagram"></svg></div>
+
+<div class="reads">
+  <div class="ann" id="ann"></div>
+  <div class="ledger">
+    <h3>Where the guarantee comes from</h3>
+    <div class="lrow" data-hit="declare"><span class="tick">○</span><span><span class="k">Declared</span><span class="v">the HTTP method — a promise, readable by every hop</span></span></div>
+    <div class="lrow" data-hit="transport"><span class="tick">○</span><span><span class="k">Honoured</span><span class="v">HTTP transport / SDK — decides whether to re-send</span></span></div>
+    <div class="lrow" data-hit="proxy"><span class="tick">○</span><span><span class="k">Honoured</span><span class="v">proxy, LB, service mesh — retries without asking you</span></span></div>
+    <div class="lrow" data-hit="code"><span class="tick">○</span><span><span class="k">Supplied</span><span class="v">your handler — keys, fingerprints, guards, status codes</span></span></div>
+    <div class="lrow enforce" data-hit="db"><span class="tick">○</span><span><span class="k">Enforced</span><span class="v">the database — the only layer that can arbitrate</span></span></div>
+  </div>
+</div>
+
+<section class="block">
+  <h2>What each layer can and cannot see</h2>
+  <p>Every hop above your handler makes its decision from the method alone. None of them can inspect what your code does. That asymmetry is the whole reason a mislabelled handler is dangerous rather than merely untidy.</p>
+  <table>
+    <thead><tr><th>Layer</th><th>Reads</th><th>Decides</th><th>Cannot see</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Client app</strong></td><td>its own timeout</td><td>whether to retry at all</td><td class="n">whether the first attempt landed</td></tr>
+      <tr><td><strong>HTTP transport</strong></td><td>method, <code>Idempotency-Key</code></td><td>re-send on a dead keep-alive connection</td><td class="n">what the handler writes</td></tr>
+      <tr><td><strong>Proxy / mesh</strong></td><td>method, status, retry policy</td><td>retry against another upstream</td><td class="n">what the handler writes</td></tr>
+      <tr><td><strong>Middleware</strong></td><td>key, fingerprint, receipt</td><td>run, replay, or reject</td><td class="m">whether a peer pod is mid-flight</td></tr>
+      <tr><td><strong>Handler</strong></td><td>the request body</td><td>what to write and what to return</td><td class="m">what a concurrent request is doing</td></tr>
+      <tr><td><strong>Database</strong></td><td>constraints, versions, isolation</td><td class="y">who wins — authoritatively</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <span class="lbl">The shape of the thing</span>
+    <p>The method <strong>declares</strong>. The middle layers <strong>obey</strong>. Your code <strong>supplies the mechanism</strong>. Only the database <strong>enforces</strong>. Every duplicate you have ever debugged came from a gap between two of those four verbs.</p>
+  </div>
+  <div class="callout warn">
+    <span class="lbl">The corollary worth memorising</span>
+    <p>Application code can coordinate but cannot arbitrate. Two pods, two goroutines, no shared memory — a check in Go is a guess about a moment that has already passed. Push the decision into one SQL statement and let the index answer it.</p>
+  </div>
+</section>
+
+<footer>RFC 9110 method semantics · nginx proxy_next_upstream · Envoy retry policy · Go net/http isReplayable</footer>
+</div>
+
+<script>
+const LANES=[
+ ['Client','app + retry loop'],
+ ['Transport','net/http, SDK'],
+ ['Proxy','nginx, Envoy'],
+ ['Middleware','idem.Middleware'],
+ ['Handler','gin handler'],
+ ['Postgres','the arbiter']
+];
+const LW=178, X0=44, TOP=68, ROW=50;
+const W=X0+6*LW+8;                 // 1120
+const x=i=>X0+i*LW+LW/2;
+const LC=['--l0','--l1','--l2','--l3','--l4','--l5'];
+
+// k: call | ret | self | lost | note      hit: which ledger row lights up
+const S=[
+{
+ id:'get', name:'GET',
+ steps:[
+  {f:0,t:1,txt:'GET /articles/42',k:'call',hit:'declare',
+   a:{who:'Client',reads:'nothing yet',does:'Chooses the verb. That choice <em>is</em> the declaration — there is no other channel for it.',blind:'—'}},
+  {f:1,t:1,txt:'method ∈ safe set → replayable = true',k:'self',hit:'transport',
+   a:{who:'HTTP transport',reads:'the method, nothing else',does:'Marks the request as safe to re-send if a pooled connection dies mid-flight. Go\u2019s <code>net/http</code> does this for GET, HEAD, OPTIONS and TRACE.',blind:'Whether your handler writes anything at all.'}},
+  {f:1,t:2,txt:'forward',k:'call'},
+  {f:2,t:2,txt:'retry policy: idempotent → retry allowed',k:'self',hit:'proxy',
+   a:{who:'Proxy',reads:'the method and the upstream status',does:'Pre-authorises itself to retry against a different backend. nginx does this by default for idempotent methods; you must add <code>non_idempotent</code> to extend it further.',blind:'Whether your handler writes anything at all.'}},
+  {f:2,t:4,txt:'attempt 1',k:'call'},
+  {f:4,t:5,txt:'SELECT article 42',k:'call',hit:'code'},
+  {f:5,t:4,txt:'row',k:'ret'},
+  {f:4,t:2,txt:'✕ pod dies before responding',k:'lost',
+   a:{who:'Handler',reads:'—',does:'Never gets to reply. From the proxy\u2019s point of view this is an ordinary upstream failure.',blind:'That the read already happened.'}},
+  {f:2,t:2,txt:'retrying — the method said this was safe',k:'self',
+   a:{who:'Proxy',reads:'its own policy',does:'Retries. It does not ask you, does not log an anomaly, and is behaving exactly correctly.',blind:'That your handler may have had side effects.'}},
+  {f:2,t:4,txt:'attempt 2',k:'call'},
+  {f:4,t:5,txt:'SELECT article 42',k:'call'},
+  {f:5,t:4,txt:'row',k:'ret'},
+  {f:4,t:0,txt:'200 OK · ETag "v7"',k:'ret',hit:'code',
+   a:{who:'Handler',reads:'the request',does:'Returns the representation with a validator so the next call can be a cheap 304.',blind:'—'}},
+  {note:'The handler ran twice. Nothing malfunctioned. Now imagine a view counter inside it — every layer above already earned the right to double it, and none of them could have known.'}
+ ]
+},
+{
+ id:'put', name:'PUT',
+ steps:[
+  {f:0,t:0,txt:'generate uuid 7f2a… → the client owns the URI',k:'self',hit:'declare',
+   a:{who:'Client',reads:'—',does:'Allocates the identity itself. This single decision is what converts a create into an assignment, and it costs nothing.',blind:'—'}},
+  {f:0,t:1,txt:'PUT /orders/7f2a  {complete document}',k:'call'},
+  {f:1,t:1,txt:'replayable = true',k:'self',hit:'transport',
+   a:{who:'HTTP transport',reads:'the method',does:'PUT is idempotent, so a dead connection is safe to re-drive.',blind:'Whether your handler really replaces, or quietly merges.'}},
+  {f:1,t:2,txt:'forward',k:'call',hit:'proxy'},
+  {f:2,t:4,txt:'attempt 1',k:'call'},
+  {f:4,t:5,txt:'INSERT … ON CONFLICT (id) DO UPDATE',k:'call',hit:'code',enf:true,
+   a:{who:'Handler → Postgres',reads:'the full representation',does:'One statement. Assignment, not accumulation: <code>x = v</code> repeated is still <code>x = v</code>.',blind:'—'}},
+  {f:5,t:4,txt:'inserted = true · version 1',k:'ret',hit:'db',enf:true,
+   a:{who:'Postgres',reads:'the primary key',does:'The key is the enforcement point. Nothing in Go decided this — the index did.',blind:'—'}},
+  {f:4,t:0,txt:'201 Created · Location · ETag "v1"',k:'ret'},
+  {note:'— timeout on the client; it retries with the identical body —'},
+  {f:0,t:4,txt:'PUT /orders/7f2a  {identical}',k:'call'},
+  {f:4,t:5,txt:'same statement',k:'call'},
+  {f:5,t:4,txt:'inserted = false · version still 1',k:'ret',enf:true,
+   a:{who:'Postgres',reads:'the content hash',does:'Content unchanged, so the version does not advance — the retry does not invalidate anyone else\u2019s <code>If-Match</code>.',blind:'—'}},
+  {f:4,t:0,txt:'200 OK · ETag "v1"',k:'ret',
+   a:{who:'Handler',reads:'the upsert result',does:'Answers 200 rather than 201. A different status code for an identical state, which is exactly what the contract permits.',blind:'—'}},
+  {note:'One resource, one version, two different status codes. Idempotency constrains server state — never the response the client receives.'}
+ ]
+},
+{
+ id:'POST (no key)', name:'POST bare',
+ steps:[
+  {f:0,t:1,txt:'POST /users  {name:"Somchai"}',k:'call',hit:'declare',
+   a:{who:'Client',reads:'—',does:'Declares "process this per the collection\u2019s own semantics", which for a collection means <em>create another member</em>.',blind:'—'}},
+  {f:1,t:1,txt:'replayable = false',k:'self',hit:'transport',
+   a:{who:'HTTP transport',reads:'the method',does:'Refuses to auto-resend. The error is handed back to the caller instead.',blind:'—'}},
+  {f:1,t:2,txt:'forward',k:'call'},
+  {f:2,t:2,txt:'non_idempotent not set → will not retry',k:'self',hit:'proxy',
+   a:{who:'Proxy',reads:'the method',does:'Also declines. Every layer here is reading the declaration correctly and obeying it.',blind:'—'}},
+  {f:2,t:4,txt:'request',k:'call'},
+  {f:4,t:5,txt:'INSERT users (uuid generated server-side)',k:'call',hit:'code'},
+  {f:5,t:4,txt:'ok · row 1',k:'ret'},
+  {f:4,t:0,txt:'✕ 201 Created — lost in transit',k:'lost',
+   a:{who:'Network',reads:'—',does:'Eats the response. The write is durable; the acknowledgement is not.',blind:'—'}},
+  {note:'Nobody violated anything. The contract said "not idempotent" and every layer respected it. The client is still stuck: the timeout is ambiguous.'},
+  {f:0,t:0,txt:'application retry loop fires',k:'self',
+   a:{who:'Client',reads:'its own timeout',does:'Retries anyway, because the alternative is dropping a user\u2019s signup on the floor. This is the correct product decision and the wrong technical outcome.',blind:'Whether attempt 1 succeeded — permanently unknowable from here.'}},
+  {f:0,t:4,txt:'POST /users  {same body}',k:'call'},
+  {f:4,t:5,txt:'INSERT users (a new uuid)',k:'call'},
+  {f:5,t:4,txt:'ok · row 2',k:'ret',bad:true,hit:'db',
+   a:{who:'Postgres',reads:'no constraint that covers this',does:'Accepts it. There is nothing to arbitrate on — two people may legitimately be named Somchai.',blind:'That this was a retry rather than a second signup.'}},
+  {f:4,t:0,txt:'201 Created',k:'ret'},
+  {note:'Two users. The method told the truth about itself; the duplicate is the honest consequence of that declaration. To change the outcome you must extend the contract — nothing below the client can do it for you.'}
+ ]
+},
+{
+ id:'POST + key', name:'POST + key',
+ steps:[
+  {f:0,t:0,txt:'generate key once, BEFORE the first attempt',k:'self',hit:'declare',
+   a:{who:'Client',reads:'—',does:'Persists the key alongside the retry loop. A key regenerated per attempt defeats the entire mechanism — the most common client-side bug in this whole area.',blind:'—'}},
+  {f:0,t:1,txt:'POST /users  Idempotency-Key: 4f2a…',k:'call'},
+  {f:1,t:1,txt:'header present → replayable = true',k:'self',hit:'transport',
+   a:{who:'HTTP transport',reads:'the header',does:'Go\u2019s transport treats a request carrying <code>Idempotency-Key</code> as replayable even though POST is not. The header is the signal that makes the automatic retry safe.',blind:'Whether the server honours the header at all.'}},
+  {f:1,t:2,txt:'forward',k:'call',hit:'proxy'},
+  {f:2,t:3,txt:'request',k:'call'},
+  {f:3,t:3,txt:'fingerprint = sha256(method ‖ path ‖ body)',k:'self',hit:'code',
+   a:{who:'Middleware',reads:'method, path, body',does:'Records what this key was used for, so a client that recycles it for different content gets a loud 422 instead of a silently wrong replay.',blind:'—'}},
+  {f:3,t:5,txt:'INSERT … ON CONFLICT DO NOTHING  (claim)',k:'call',enf:true},
+  {f:5,t:3,txt:'owned = true',k:'ret',hit:'db',enf:true,
+   a:{who:'Postgres',reads:'the unique key on (tenant, endpoint, key)',does:'Grants the claim. One atomic statement — never SELECT then INSERT, because that gap is where the duplicate is born.',blind:'—'}},
+  {f:3,t:4,txt:'BEGIN · hand over the transaction',k:'call',
+   a:{who:'Middleware',reads:'—',does:'Opens one transaction and passes it down, so the effect and the receipt can only commit together.',blind:'—'}},
+  {f:4,t:5,txt:'INSERT users  (same transaction)',k:'call'},
+  {f:5,t:4,txt:'ok',k:'ret'},
+  {f:4,t:3,txt:'201 + body — buffered, not yet sent',k:'ret',
+   a:{who:'Middleware',reads:'the handler\u2019s output',does:'Holds the bytes back. Streaming now would promise "201 Created" before the commit lands.',blind:'—'}},
+  {f:3,t:5,txt:'UPDATE receipt — same transaction',k:'call',enf:true},
+  {f:3,t:5,txt:'COMMIT',k:'call',enf:true,hit:'db',
+   a:{who:'Postgres',reads:'the transaction',does:'Effect and receipt become durable in the same instant. This single fact is what makes the whole scheme sound; split them across two stores and the original ambiguity walks straight back in.',blind:'—'}},
+  {f:3,t:0,txt:'flush 201 Created',k:'ret'},
+  {f:0,t:0,txt:'✕ response lost — client retries, same key',k:'self',bad:true},
+  {f:0,t:3,txt:'POST /users  Idempotency-Key: 4f2a…',k:'call'},
+  {f:3,t:5,txt:'claim → 0 rows',k:'call',enf:true},
+  {f:5,t:3,txt:'state = completed · fingerprint matches',k:'ret',hit:'db',enf:true,
+   a:{who:'Postgres',reads:'the stored receipt',does:'Reports that this operation already finished, and that the payload is the same one.',blind:'—'}},
+  {f:3,t:0,txt:'201 Created · Idempotent-Replayed: true',k:'ret',
+   a:{who:'Middleware',reads:'the receipt',does:'Replays the original status and body verbatim. The handler never ran a second time.',blind:'—'}},
+  {note:'One user. The client extended a contract the method could not make on its own — and the database, once again, is the layer that actually enforced it.'}
+ ]
+},
+{
+ id:'race', name:'Two at once',
+ steps:[
+  {f:0,t:3,txt:'attempt A — key 9c1d…',k:'call',hit:'declare'},
+  {f:0,t:3,txt:'attempt B — key 9c1d…  (3 ms later)',k:'call',
+   a:{who:'Client',reads:'—',does:'Two retries in flight simultaneously — a slow first attempt plus an impatient backoff timer. Perfectly ordinary.',blind:'That the other attempt exists.'}},
+  {f:3,t:3,txt:'both middlewares reach the claim, concurrently',k:'self',hit:'code',
+   a:{who:'Middleware ×2',reads:'the same key',does:'Nothing useful yet. Two pods, two goroutines, no shared memory — neither can see the other.',blind:'Everything that matters.'}},
+  {f:3,t:5,txt:'A: INSERT … ON CONFLICT DO NOTHING',k:'call',enf:true},
+  {f:3,t:5,txt:'B: INSERT … ON CONFLICT DO NOTHING',k:'call',enf:true},
+  {f:5,t:3,txt:'A → owned = true   ·   B → 0 rows',k:'ret',hit:'db',enf:true,
+   a:{who:'Postgres',reads:'one unique index',does:'Picks a winner, authoritatively. This is the only place in the entire stack where that decision can safely be made.',blind:'—'}},
+  {f:3,t:0,txt:'B: 409 idempotency_key_in_use · Retry-After: 1',k:'ret',
+   a:{who:'Middleware (B)',reads:'the live lease',does:'Declines without blocking a connection. Waiting for A instead would be friendlier and would pin a worker — a real trade-off, not a wrong answer.',blind:'How long A will take.'}},
+  {f:4,t:5,txt:'A: INSERT users · receipt · COMMIT',k:'call',enf:true},
+  {f:0,t:3,txt:'B retries after backoff',k:'call'},
+  {f:3,t:0,txt:'201 Created · Idempotent-Replayed: true',k:'ret',hit:'db'},
+  {note:'An `if !exists { insert }` in Go would have produced two rows here and passed every unit test. Application code coordinates; only the index arbitrates.'}
+ ]
+}
+];
+
+let cur=0, step=0, timer=null;
+const svg=document.getElementById('svg');
+const seg=document.getElementById('scenSeg');
+
+S.forEach((s,i)=>{
+  const b=document.createElement('button');
+  b.textContent=s.name;b.setAttribute('aria-pressed',i===0);
+  b.onclick=()=>{stop();cur=i;step=0;
+    [...seg.children].forEach((x,j)=>x.setAttribute('aria-pressed',j===i));
+    render();};
+  seg.appendChild(b);
+});
+
+function esc(s){return s.replace(/&(?![a-z]+;|#)/g,'&amp;');}
+
+function render(){
+  const sc=S[cur], n=sc.steps.length;
+  const H=TOP+22+n*ROW+18;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  svg.setAttribute('height',H);
+
+  const css=getComputedStyle(document.documentElement);
+  const hue=i=>css.getPropertyValue(LC[i]).trim();
+  const stamp=css.getPropertyValue('--stamp').trim();
+
+  // one arrowhead per lane colour, plus one for failures
+  let out='<defs>';
+  LANES.forEach((_,i)=>{
+    out+=`<marker id="ah${i}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="${hue(i)}" stroke-width="1.8" stroke-linejoin="round"/></marker>`;
+  });
+  out+=`<marker id="ahX" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7.5" markerHeight="7.5" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9" fill="none" stroke="${stamp}" stroke-width="1.8" stroke-linejoin="round"/></marker>`;
+  out+='</defs>';
+
+  // alternating column tint so you can track a lane down the page
+  LANES.forEach((_,i)=>{
+    if(i%2===1) out+=`<rect class="col-band" x="${x(i)-LW/2}" y="60" width="${LW}" height="${H-60}"/>`;
+  });
+
+  // lane headers: colour bar on top, coloured name, tinted lifeline
+  LANES.forEach((l,i)=>{
+    const cx=x(i), c=hue(i);
+    out+=`<rect class="lane-box" x="${cx-82}" y="10" width="164" height="46" rx="1"/>`;
+    out+=`<line class="lane-accent" x1="${cx-82}" y1="12.5" x2="${cx+82}" y2="12.5" stroke="${c}"/>`;
+    out+=`<text class="lane-name" x="${cx}" y="32" text-anchor="middle" fill="${c}">${l[0]}</text>`;
+    out+=`<text class="lane-sub" x="${cx}" y="47" text-anchor="middle">${l[1]}</text>`;
+    out+=`<line class="lifeline" x1="${cx}" y1="58" x2="${cx}" y2="${H-10}" stroke="${c}"/>`;
+  });
+
+  sc.steps.forEach((s,i)=>{
+    const y=TOP+24+i*ROW;
+    let cls='row';
+    if(i<step) cls+=' seen';
+    if(i===step) cls+=' seen active';
+
+    // colour follows the SPEAKER, except failures which are always red
+    const ci = s.bad || s.k==='lost' ? 'X' : (s.f ?? 0);
+    const bar = ci==='X' ? stamp : hue(ci);
+
+    out+=`<g class="${cls}">`;
+    out+=`<rect class="band" x="8" y="${y-20}" width="${W-16}" height="40"/>`;
+    out+=`<rect class="bandbar" x="8" y="${y-20}" width="4" height="40" fill="${bar}"/>`;
+
+    if(s.note!==undefined){
+      out+=`<rect class="note-band" x="${X0-8}" y="${y-17}" width="${W-X0-4}" height="34" rx="1"/>`;
+      out+=`<text class="note-text" x="${(X0+W)/2-6}" y="${y+5}" text-anchor="middle">${esc(s.note)}</text>`;
+      out+='</g>';
+      return;
+    }
+
+    out+=`<text class="gutter" x="${X0-16}" y="${y+4}" text-anchor="end">${String(i+1).padStart(2,'0')}</text>`;
+
+    if(s.k==='self'){
+      const cx=x(s.f);
+      out+=`<path class="msg c${ci}" d="M${cx},${y-10} h36 v20 h-36" marker-end="url(#ah${ci})"/>`;
+      out+=`<text class="msg-label t${ci}" x="${cx+46}" y="${y+4}">${esc(s.txt)}</text>`;
+    } else if(s.k==='lost'){
+      const x1=x(s.f), x2=x(s.t), mx=x1+(x2-x1)*0.5;
+      out+=`<line class="msg cX ret" x1="${x1}" y1="${y}" x2="${mx}" y2="${y}"/>`;
+      out+=`<path class="xmark" d="M${mx-8},${y-8} L${mx+8},${y+8} M${mx+8},${y-8} L${mx-8},${y+8}"/>`;
+      out+=`<text class="msg-label tX" x="${mx+16}" y="${y-9}">${esc(s.txt)}</text>`;
+    } else {
+      const x1=x(s.f), x2=x(s.t), d = x2>x1?-5:5;
+      out+=`<line class="msg c${ci}${s.k==='ret'?' ret':''}" x1="${x1-d}" y1="${y}" x2="${x2+d}" y2="${y}" marker-end="url(#ah${ci})"/>`;
+      out+=`<text class="msg-label t${ci}" x="${(x1+x2)/2}" y="${y-9}" text-anchor="middle">${esc(s.txt)}</text>`;
+    }
+
+    // green pip in the right margin: this is where the DB actually decides
+    if(s.enf){
+      out+=`<path class="enf-pip" d="M${W-20},${y-5} l5,5 -5,5 -5,-5 z"/>`;
+      out+=`<text class="enf-tag" x="${W-30}" y="${y+3}" text-anchor="end">ENFORCED</text>`;
+    }
+    out+='</g>';
+  });
+
+  svg.innerHTML=out;
+  document.getElementById('counter').textContent=`${step+1} / ${n}`;
+  document.getElementById('prev').disabled=step===0;
+  document.getElementById('next').disabled=step===n-1;
+
+  // annotation: fall back to the most recent step that carried one
+  let a=null, aLane=0;
+  for(let i=step;i>=0;i--){ if(sc.steps[i].a){a=sc.steps[i].a;aLane=sc.steps[i].f??0;break;} }
+  const ann=document.getElementById('ann');
+  const s=sc.steps[step];
+  ann.style.borderLeft=`5px solid ${hue(aLane)}`;
+  if(s.note!==undefined && step===sc.steps.length-1){
+    ann.style.borderLeft='5px solid '+css.getPropertyValue('--ink').trim();
+    ann.innerHTML=`<div class="who">What this scenario shows</div><p style="font-size:16px">${esc(s.note)}</p>`;
+  } else if(a){
+    ann.innerHTML=`<div class="who" style="color:${hue(aLane)}">${a.who}</div><dl>
+      <dt>Reads</dt><dd>${a.reads}</dd>
+      <dt>Decides</dt><dd>${a.does}</dd>
+      <dt>Blind to</dt><dd class="blind">${a.blind}</dd></dl>`;
+  } else { ann.innerHTML=''; }
+
+  // ledger lights up cumulatively
+  const hits=new Set();
+  for(let i=0;i<=step;i++) if(sc.steps[i].hit) hits.add(sc.steps[i].hit);
+  document.querySelectorAll('.lrow').forEach(r=>{
+    const lit=hits.has(r.dataset.hit);
+    r.classList.toggle('lit',lit);
+    r.querySelector('.tick').textContent=lit?'●':'○';
+  });
+}
+
+function go(d){stop();step=Math.max(0,Math.min(S[cur].steps.length-1,step+d));render();}
+document.getElementById('prev').onclick=()=>go(-1);
+document.getElementById('next').onclick=()=>go(1);
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'){go(1)} if(e.key==='ArrowLeft'){go(-1)}
+});
+
+const playBtn=document.getElementById('play');
+function stop(){if(timer){clearInterval(timer);timer=null;playBtn.textContent='Play'}}
+playBtn.onclick=()=>{
+  if(timer){stop();return}
+  if(step>=S[cur].steps.length-1) step=0;
+  playBtn.textContent='Pause';
+  render();
+  timer=setInterval(()=>{
+    if(step>=S[cur].steps.length-1){stop();return}
+    step++;render();
+  }, matchMedia('(prefers-reduced-motion:reduce)').matches?1:1150);
+};
+
+render();
+</script>
+</body>
+</html>
