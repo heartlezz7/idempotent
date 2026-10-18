@@ -28,6 +28,18 @@ type publishReq struct {
 // optional -- omit it to send a fire-and-forget message, same as the
 // doc's "accept absence, process normally" policy for a missing
 // Idempotency-Key.
+//
+//	@Summary		Publish a message
+//	@Description	Stand-in for an external producer. dedupe_key is optional; reusing it with the same payload returns the existing message (deduped=true), with a different payload returns 422.
+//	@Tags			producer
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		model.PublishRequest	true	"Message to publish"
+//	@Success		201		{object}	model.PublishResponse
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		422		{object}	model.ErrorResponse	"dedupe_key_reused_with_different_payload"
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/publish [post]
 func (h *Handler) Publish(c *gin.Context) {
 	var req publishReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -49,6 +61,17 @@ func (h *Handler) Publish(c *gin.Context) {
 // NaiveConsume claims one message from ?topic= and runs it through the
 // unprotected handler for that resource: every delivery lands, so
 // replaying the same message inflates audit_log once per delivery.
+//
+//	@Summary		Consume one message (naive)
+//	@Description	Claims one message and applies it unconditionally: every redelivery duplicates the effect.
+//	@Tags			consumers
+//	@Produce		json
+//	@Param			topic			query		string				true	"Topic to claim from"	Enums(orders, notifications)
+//	@Param			lease_seconds	query		int					false	"Lease length in seconds (default 5)"
+//	@Success		200				{object}	consumer.Outcome	"Processed (or model.NoMessagesResponse when the topic is empty)"
+//	@Failure		400				{object}	model.ErrorResponse
+//	@Failure		500				{object}	model.ErrorResponse
+//	@Router			/naive/consume [post]
 func (h *Handler) NaiveConsume(c *gin.Context) {
 	topic := c.Query("topic")
 	if topic == "" {
@@ -87,6 +110,18 @@ func naiveProcessor(topic string) func(ctx context.Context, pool *pgxpool.Pool, 
 // protected handler for that resource. ?chaos= selects a fault injection
 // point (crash_before_commit | crash_after_commit_before_ack) so the
 // crash windows from the doc's races table can be exercised on demand.
+//
+//	@Summary		Consume one message (safe)
+//	@Description	Orders use a monotonic version guard plus the transactional outbox; notifications use the inbox table. chaos injects a crash before commit or after commit but before ack.
+//	@Tags			consumers
+//	@Produce		json
+//	@Param			topic			query		string				true	"Topic to claim from"	Enums(orders, notifications)
+//	@Param			lease_seconds	query		int					false	"Lease length in seconds (default 5)"
+//	@Param			chaos			query		string				false	"Fault injection point"	Enums(crash_before_commit, crash_after_commit_before_ack)
+//	@Success		200				{object}	consumer.Outcome	"Processed, skipped, or chaos outcome (or model.NoMessagesResponse when the topic is empty)"
+//	@Failure		400				{object}	model.ErrorResponse
+//	@Failure		500				{object}	model.ErrorResponse
+//	@Router			/safe/consume [post]
 func (h *Handler) SafeConsume(c *gin.Context) {
 	topic := c.Query("topic")
 	if topic == "" {
@@ -124,6 +159,15 @@ func (h *Handler) SafeConsume(c *gin.Context) {
 
 // RelayRun runs the transactional outbox relay once, publishing up to
 // ?limit= (default 10) pending outbox rows onto the queue.
+//
+//	@Summary		Run the outbox relay once
+//	@Description	Publishes up to limit unpublished outbox_events rows onto the queue with dedupe_key outbox:{id}.
+//	@Tags			relay
+//	@Produce		json
+//	@Param			limit	query		int	false	"Max rows to publish (default 10)"
+//	@Success		200		{object}	model.RelayResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/relay/run [post]
 func (h *Handler) RelayRun(c *gin.Context) {
 	limit := 10
 	if v := c.Query("limit"); v != "" {
@@ -147,6 +191,17 @@ type messageIDReq struct {
 // the consumer already fully processed (an ack that never reached the
 // broker, or a rebalance replay). Use it to prove the SAFE consumers
 // absorb a duplicate; the naive ones will visibly duplicate the effect.
+//
+//	@Summary		Force a redelivery (lab-only)
+//	@Description	Resets a message to pending regardless of status, including done -- simulates a broker replay.
+//	@Tags			chaos
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		model.MessageIDRequest	true	"Message to redeliver"
+//	@Success		200		{object}	model.RedeliverResponse
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/_duplicate [post]
 func (h *Handler) ForceRedeliver(c *gin.Context) {
 	var req messageIDReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -163,6 +218,17 @@ func (h *Handler) ForceRedeliver(c *gin.Context) {
 // ForceExpireLease is lab-only: backdates a message's lease so the next
 // Claim can steal it immediately, to exercise the stuck-in-progress
 // recovery path without waiting out the real lease duration.
+//
+//	@Summary		Expire a lease now (lab-only)
+//	@Description	Backdates a leased message so the next claim can steal it.
+//	@Tags			chaos
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		model.MessageIDRequest	true	"Leased message"
+//	@Success		200		{object}	model.ExpireLeaseResponse
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/_expire_lease [post]
 func (h *Handler) ForceExpireLease(c *gin.Context) {
 	var req messageIDReq
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -1,0 +1,373 @@
+basePath: /
+definitions:
+  consumer.Outcome:
+    properties:
+      acked:
+        type: boolean
+      applied:
+        type: boolean
+      consumer:
+        description: '"naive" | "safe"'
+        type: string
+      detail:
+        type: string
+      message_id:
+        type: integer
+      resource:
+        description: '"order" | "notification"'
+        type: string
+    type: object
+  model.AuditCount:
+    properties:
+      consumer:
+        example: safe
+        type: string
+      count:
+        type: integer
+      op:
+        example: order.apply
+        type: string
+    type: object
+  model.ErrorResponse:
+    properties:
+      error:
+        example: topic query param required
+        type: string
+    type: object
+  model.ExpireLeaseResponse:
+    properties:
+      lease:
+        example: expired
+        type: string
+      message_id:
+        example: 1
+        type: integer
+    type: object
+  model.MessageIDRequest:
+    properties:
+      message_id:
+        example: 1
+        type: integer
+    required:
+    - message_id
+    type: object
+  model.PublishRequest:
+    properties:
+      dedupe_key:
+        example: order-123:v2
+        type: string
+      payload:
+        type: object
+      topic:
+        example: orders
+        type: string
+    required:
+    - payload
+    - topic
+    type: object
+  model.PublishResponse:
+    properties:
+      deduped:
+        type: boolean
+      message_id:
+        example: 1
+        type: integer
+    type: object
+  model.QueueCount:
+    properties:
+      count:
+        type: integer
+      status:
+        example: done
+        type: string
+      topic:
+        example: orders
+        type: string
+    type: object
+  model.RedeliverResponse:
+    properties:
+      message_id:
+        example: 1
+        type: integer
+      status:
+        example: pending
+        type: string
+    type: object
+  model.RelayResponse:
+    properties:
+      published:
+        type: integer
+    type: object
+  model.ResetResponse:
+    properties:
+      reset:
+        example: true
+        type: boolean
+    type: object
+  model.StatsResponse:
+    properties:
+      audit_log:
+        items:
+          $ref: '#/definitions/model.AuditCount'
+        type: array
+      inbox_processed:
+        type: integer
+      notifications_sent:
+        type: integer
+      orders:
+        type: integer
+      outbox_pending:
+        type: integer
+      outbox_published:
+        type: integer
+      queue_messages:
+        items:
+          $ref: '#/definitions/model.QueueCount'
+        type: array
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: |-
+    Control plane for the queue/consumer idempotency lab: publish onto a Postgres-backed broker,
+    step naive vs safe consumers, run the outbox relay, and inject redeliveries.
+    Every applied effect appends to audit_log -- read GET /_stats to see whether a redelivery duplicated anything.
+  title: Idempotency Lab API (async queue flow)
+  version: "1.0"
+paths:
+  /_duplicate:
+    post:
+      consumes:
+      - application/json
+      description: Resets a message to pending regardless of status, including done
+        -- simulates a broker replay.
+      parameters:
+      - description: Message to redeliver
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.MessageIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.RedeliverResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Force a redelivery (lab-only)
+      tags:
+      - chaos
+  /_expire_lease:
+    post:
+      consumes:
+      - application/json
+      description: Backdates a leased message so the next claim can steal it.
+      parameters:
+      - description: Leased message
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.MessageIDRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ExpireLeaseResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Expire a lease now (lab-only)
+      tags:
+      - chaos
+  /_reset:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ResetResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Truncate every lab table
+      tags:
+      - lab
+  /_stats:
+    get:
+      description: audit_log counts per consumer/op, queue_messages per topic/status,
+        and row counts for orders, notifications, inbox and outbox.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.StatsResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Scoreboard
+      tags:
+      - lab
+  /naive/consume:
+    post:
+      description: 'Claims one message and applies it unconditionally: every redelivery
+        duplicates the effect.'
+      parameters:
+      - description: Topic to claim from
+        enum:
+        - orders
+        - notifications
+        in: query
+        name: topic
+        required: true
+        type: string
+      - description: Lease length in seconds (default 5)
+        in: query
+        name: lease_seconds
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Processed (or model.NoMessagesResponse when the topic is empty)
+          schema:
+            $ref: '#/definitions/consumer.Outcome'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Consume one message (naive)
+      tags:
+      - consumers
+  /publish:
+    post:
+      consumes:
+      - application/json
+      description: Stand-in for an external producer. dedupe_key is optional; reusing
+        it with the same payload returns the existing message (deduped=true), with
+        a different payload returns 422.
+      parameters:
+      - description: Message to publish
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.PublishRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/model.PublishResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "422":
+          description: dedupe_key_reused_with_different_payload
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Publish a message
+      tags:
+      - producer
+  /relay/run:
+    post:
+      description: Publishes up to limit unpublished outbox_events rows onto the queue
+        with dedupe_key outbox:{id}.
+      parameters:
+      - description: Max rows to publish (default 10)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.RelayResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Run the outbox relay once
+      tags:
+      - relay
+  /safe/consume:
+    post:
+      description: Orders use a monotonic version guard plus the transactional outbox;
+        notifications use the inbox table. chaos injects a crash before commit or
+        after commit but before ack.
+      parameters:
+      - description: Topic to claim from
+        enum:
+        - orders
+        - notifications
+        in: query
+        name: topic
+        required: true
+        type: string
+      - description: Lease length in seconds (default 5)
+        in: query
+        name: lease_seconds
+        type: integer
+      - description: Fault injection point
+        enum:
+        - crash_before_commit
+        - crash_after_commit_before_ack
+        in: query
+        name: chaos
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Processed, skipped, or chaos outcome (or model.NoMessagesResponse
+            when the topic is empty)
+          schema:
+            $ref: '#/definitions/consumer.Outcome'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Consume one message (safe)
+      tags:
+      - consumers
+schemes:
+- http
+swagger: "2.0"

@@ -2,16 +2,37 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/heartlezz7/idempotent/doc/swagger"
 	"github.com/heartlezz7/idempotent/src/handler"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// @title			Idempotency Lab API (async queue flow)
+// @version		1.0
+// @description	Control plane for the queue/consumer idempotency lab: publish onto a Postgres-backed broker,
+// @description	step naive vs safe consumers, run the outbox relay, and inject redeliveries.
+// @description	Every applied effect appends to audit_log -- read GET /_stats to see whether a redelivery duplicated anything.
+// @host			localhost:8080
+// @BasePath		/
+// @schemes		http
 func main() {
+	// Load .env from the working directory if there is one. Variables
+	// already set in the environment (e.g. by docker compose) win, and a
+	// missing file is fine -- the defaults below still apply.
+	if err := godotenv.Load(); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log.Fatalf("load .env: %v", err)
+	}
+
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable"
@@ -35,6 +56,9 @@ func main() {
 	// ---- lab controls -------------------------------------------------
 	r.GET("/_stats", h.Stats)
 	r.POST("/_reset", h.Reset)
+
+	// ---- API docs: /swagger/index.html ---------------------------------
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// ---- producer -------------------------------------------------------
 	// A manual stand-in for an external system publishing onto the

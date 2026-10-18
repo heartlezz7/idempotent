@@ -22,6 +22,14 @@ type queueCount struct {
 // the same number of times, then compare audit_log counts here. A
 // correct consumer applies an effect once per logical change; a naive one
 // applies it once per delivery.
+//
+//	@Summary		Scoreboard
+//	@Description	audit_log counts per consumer/op, queue_messages per topic/status, and row counts for orders, notifications, inbox and outbox.
+//	@Tags			lab
+//	@Produce		json
+//	@Success		200	{object}	model.StatsResponse
+//	@Failure		500	{object}	model.ErrorResponse
+//	@Router			/_stats [get]
 func (h *Handler) Stats(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -96,6 +104,13 @@ func (h *Handler) Stats(c *gin.Context) {
 
 // Reset truncates every lab table without restarting the process --
 // cheaper than a full docker compose cycle between manual experiments.
+//
+//	@Summary	Truncate every lab table
+//	@Tags		lab
+//	@Produce	json
+//	@Success	200	{object}	model.ResetResponse
+//	@Failure	500	{object}	model.ErrorResponse
+//	@Router		/_reset [post]
 func (h *Handler) Reset(c *gin.Context) {
 	_, err := h.pool.Exec(c.Request.Context(), `
 		TRUNCATE queue_messages, inbox_processed, orders, notifications_sent,

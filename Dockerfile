@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go application for Linux (Cloud Run uses Linux x86-64 architecture)
-RUN GOOS=linux GOARCH=amd64 go build -o main .
+RUN GOOS=linux GOARCH=amd64 go build -o main ./cmd/server
 
 # Use a minimal base image for production (e.g., Distroless or Alpine)
 # FROM gcr.io/distroless/base

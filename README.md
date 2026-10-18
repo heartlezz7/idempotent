@@ -17,13 +17,95 @@ deliveries, read `GET /_stats`: a correct consumer appends once.
 
 ## Run it
 
+Two ways: everything in Docker, or Postgres in Docker and the API on the host.
+
+### Option A: all in Docker
+
 ```bash
-make up      # postgres + schema
-make run     # go mod tidy, then serve on :8080
-make test    # the full experiment suite (needs curl + jq)
+docker compose up -d --build   # postgres + the app on :8080, schema applied on first boot
+docker compose logs -f app     # follow the app's logs
 ```
 
-`make down` wipes the volume. `POST /_reset` truncates without restarting.
+The `app` service gets its `DATABASE_URL` from `docker-compose.yml` and reaches
+Postgres at `db:5432` on the compose network; it does not read `.env`.
+
+### Option B: API on the host
+
+```bash
+cp .env.example .env           # once; fill in <username> and <password>
+make up                        # postgres on localhost:5433, schema applied on first boot
+make run                       # go mod tidy, then go run ./cmd/server on :8080
+```
+
+Use the `POSTGRES_USER` / `POSTGRES_PASSWORD` from `docker-compose.yml`
+for `<username>` / `<password>`, percent-encoding any special characters.
+Don't run the compose `app` service and `make run` at the same time; both
+listen on `:8080`.
+
+### Then
+
+```bash
+make test                      # the full experiment suite (needs curl + jq)
+make unit-test                 # go test ./... against postgres (see Tests)
+make reset                     # POST /_reset: truncate every table without restarting
+make psql                      # psql shell on the database
+make down                      # stop everything and wipe the db volume
+```
+
+Once it's up:
+
+| | URL |
+|---|---|
+| API | <http://localhost:8080> |
+| Swagger UI | <http://localhost:8080/swagger/index.html> |
+| Raw spec (JSON) | <http://localhost:8080/swagger/doc.json> |
+| Scoreboard | <http://localhost:8080/_stats> |
+
+### Configuration
+
+`cmd/server` loads `.env` from the working directory with
+[`joho/godotenv`](https://github.com/joho/godotenv). Variables already set in
+the environment take precedence, and a missing `.env` is fine.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable` | Postgres connection string |
+| `ADDR` | `:8080` | Listen address |
+
+Special characters in the password must be percent-encoded in the URL — `@`
+becomes `%40`. `POSTGRES_PASSWORD` only applies when the volume is first
+created; after changing it in `docker-compose.yml`, run `make down` so the
+database is re-initialised with the new password.
+
+## API spec (Swagger)
+
+With the app running, open the Swagger UI at
+<http://localhost:8080/swagger/index.html> (raw spec:
+<http://localhost:8080/swagger/doc.json>). The same spec is committed at
+`doc/swagger/swagger.yaml` (and `.json`).
+
+The spec is generated from `swag` annotations on the handlers in
+`src/handler/`. After changing a route, a request/response type or an
+annotation, regenerate it:
+
+```bash
+make swagger   # swag fmt + swag init -> doc/swagger/
+```
+
+The target runs a pinned `swag` (`SWAG_VERSION`, default `v1.16.6`) via
+`go run`, so nothing needs installing. Keep it in step with the
+`github.com/swaggo/swag` version in `go.mod`, or the generated `docs.go`
+may not compile.
+
+## Docs
+
+Open these in a browser; they are self-contained HTML.
+
+- [`doc/api-idempotency.html`](doc/api-idempotency.html) — the conceptual deep dive; its "Beyond HTTP" tab is what this branch implements.
+- [`doc/async-flow.html`](doc/async-flow.html) — architecture of the queue flow: producer dedupe, safe consumers, outbox relay, inbox.
+- [`doc/queue-message.html`](doc/queue-message.html) — lifecycle of a `queue_messages` row, including the crash windows and the `/_duplicate` replay.
+
+The two diagrams are generated with [Archify](https://github.com/tt-a1i/archify) from the `.json` files next to them. Edit the JSON and re-run `archify deliver` rather than editing the HTML.
 
 ## Why two resources
 
