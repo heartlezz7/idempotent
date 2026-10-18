@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/heartlezz7/idempotent/doc/swagger"
+	_ "github.com/heartlezz7/idempotent/docs/swagger"
 	"github.com/heartlezz7/idempotent/src/handler"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"

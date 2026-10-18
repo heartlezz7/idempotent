@@ -1,7 +1,7 @@
 # Idempotency lab — beyond HTTP: queues and consumers
 
 The HTTP `Idempotency-Key` lab lives on another branch. This one is the doc's
-["Beyond HTTP"](doc/api-idempotency.html) section made runnable: a
+["Beyond HTTP"](docs/api-idempotency.html) section made runnable: a
 single-node, Postgres-backed stand-in for a message broker, and two ways to
 write a consumer against it.
 
@@ -82,14 +82,14 @@ database is re-initialised with the new password.
 With the app running, open the Swagger UI at
 <http://localhost:8080/swagger/index.html> (raw spec:
 <http://localhost:8080/swagger/doc.json>). The same spec is committed at
-`doc/swagger/swagger.yaml` (and `.json`).
+`docs/swagger/swagger.yaml` (and `.json`).
 
 The spec is generated from `swag` annotations on the handlers in
 `src/handler/`. After changing a route, a request/response type or an
 annotation, regenerate it:
 
 ```bash
-make swagger   # swag fmt + swag init -> doc/swagger/
+make swagger   # swag fmt + swag init -> docs/swagger/
 ```
 
 The target runs a pinned `swag` (`SWAG_VERSION`, default `v1.16.6`) via
@@ -101,9 +101,9 @@ may not compile.
 
 Open these in a browser; they are self-contained HTML.
 
-- [`doc/api-idempotency.html`](doc/api-idempotency.html) — the conceptual deep dive; its "Beyond HTTP" tab is what this branch implements.
-- [`doc/async-flow.html`](doc/async-flow.html) — architecture of the queue flow: producer dedupe, safe consumers, outbox relay, inbox.
-- [`doc/queue-message.html`](doc/queue-message.html) — lifecycle of a `queue_messages` row, including the crash windows and the `/_duplicate` replay.
+- [`docs/api-idempotency.html`](docs/api-idempotency.html) — the conceptual deep dive; its "Beyond HTTP" tab is what this branch implements.
+- [`docs/async-flow.html`](docs/async-flow.html) — architecture of the queue flow: producer dedupe, safe consumers, outbox relay, inbox.
+- [`docs/queue-message.html`](docs/queue-message.html) — lifecycle of a `queue_messages` row, including the crash windows and the `/_duplicate` replay.
 
 The two diagrams are generated with [Archify](https://github.com/tt-a1i/archify) from the `.json` files next to them. Edit the JSON and re-run `archify deliver` rather than editing the HTML.
 

@@ -29,6 +29,6 @@ reset:
 
 SWAG_VERSION ?= v1.16.6
 
-swagger:       ## regenerate doc/swagger from the handler annotations
+swagger:       ## regenerate docs/swagger from the handler annotations
 	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) fmt -g main.go -d ./cmd/server,./src/handler
-	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g main.go -d ./cmd/server,./src/handler,./src/model,./src/consumer -o doc/swagger --parseInternal
+	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g main.go -d ./cmd/server,./src/handler,./src/model,./src/consumer -o docs/swagger --parseInternal
