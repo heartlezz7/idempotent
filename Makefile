@@ -1,9 +1,9 @@
-.PHONY: up down run tidy test psql reset
+.PHONY: up down run tidy test unit-test psql reset
 
 up:            ## start postgres and apply migrations
-	docker compose up -d
+	docker compose up -d db
 	@echo "waiting for postgres..."
-	@until docker compose exec -T db pg_isready -U lab -d lab >/dev/null 2>&1; do sleep 1; done
+	@until docker compose exec -T db pg_isready -U postgres -d postgres >/dev/null 2>&1; do sleep 1; done
 	@echo "ready"
 
 down:          ## stop and wipe the database volume
@@ -13,13 +13,16 @@ tidy:
 	go mod tidy
 
 run: tidy      ## start the API on :8080
-	go run ./cmd/server
+	go run .
 
-test:          ## run the full experiment suite against a running server
+test:          ## run the full experiment suite against a running server (needs `make run` in another shell)
 	./scripts/experiments.sh
 
-reset:
-	curl -sX POST localhost:8080/_reset | jq .
+unit-test:     ## run the go test suite directly against postgres (needs `make up`, no server required)
+	go test ./... -count=1
 
 psql:
 	docker compose exec db psql -U postgres -d postgres
+
+reset:
+	curl -sX POST localhost:8080/_reset | jq .

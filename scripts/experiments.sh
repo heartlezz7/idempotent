@@ -1,171 +1,150 @@
 #!/usr/bin/env bash
-# Idempotency lab -- experiment suite.
-#
-# Requires: curl, jq, and a running server (make up && make run).
-# Each experiment resets the database first, so you can also run them
-# one at a time by copying the block you care about.
+# Full experiment suite for the async/queue idempotency lab.
+# Needs: curl, jq, a running server (make run), and a fresh db (make reset).
+set -euo pipefail
 
-set -uo pipefail
-BASE="${BASE:-http://localhost:8080}"
+HOST="${HOST:-http://localhost:8080}"
+pass=0
+fail=0
 
-bold()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
-dim()   { printf '\033[2m%s\033[0m\n' "$*"; }
-good()  { printf '  \033[32m%s\033[0m\n' "$*"; }
-bad()   { printf '  \033[31m%s\033[0m\n' "$*"; }
+reset() { curl -sX POST "$HOST/_reset" >/dev/null; }
 
-reset() { curl -sX POST "$BASE/_reset" >/dev/null; }
-stats() { curl -s "$BASE/_stats"; }
-
-# call METHOD PATH [BODY] [EXTRA_CURL_ARGS...]
-# prints "<status> <body>"
-call() {
-  local method="$1" path="$2" body="${3:-}"; shift 3 || shift 2
-  if [[ -n "$body" ]]; then
-    curl -s -o /tmp/idem.out -w '%{http_code}' -X "$method" "$BASE$path" \
-      -H 'Content-Type: application/json' -d "$body" "$@"
-  else
-    curl -s -o /tmp/idem.out -w '%{http_code}' -X "$method" "$BASE$path" "$@"
-  fi
-  printf ' '
-  cat /tmp/idem.out
-  echo
+stat_count() {
+  # stat_count <consumer> <op>
+  curl -s "$HOST/_stats" | jq -r --arg c "$1" --arg o "$2" \
+    '(.audit_log // []) | map(select(.consumer==$c and .op==$o)) | (.[0].count // 0)'
 }
 
-KEY="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
+expect_eq() {
+  local desc="$1" got="$2" want="$3"
+  if [[ "$got" == "$want" ]]; then
+    echo "  ok   $desc (got $got)"
+    pass=$((pass+1))
+  else
+    echo "  FAIL $desc (got $got, want $want)"
+    fail=$((fail+1))
+  fi
+}
 
-# =====================================================================
-bold "1. POST /naive/users x3  -- the same body, three times"
+publish() {
+  # publish <topic> <dedupe_key|null> <payload-json>
+  local topic="$1" key="$2" payload="$3"
+  if [[ "$key" == "null" ]]; then
+    curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+      -d "{\"topic\":\"$topic\",\"payload\":$payload}"
+  else
+    curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+      -d "{\"topic\":\"$topic\",\"dedupe_key\":\"$key\",\"payload\":$payload}"
+  fi
+}
+
+echo "=== 1. Naive order consumer duplicates every redelivery ==="
 reset
+resp=$(curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","payload":{"order_id":"order-1","status":"paid","version":1}}')
+mid=$(jq -r .message_id <<<"$resp")
+# process it 3 times by forcing redelivery between each consume
 for i in 1 2 3; do
-  dim "  attempt $i: $(call POST /naive/users '{"name":"Somchai"}')"
+  curl -s -X POST "$HOST/naive/consume?topic=orders" >/dev/null
+  curl -s -X POST "$HOST/_duplicate" -H 'Content-Type: application/json' -d "{\"message_id\":$mid}" >/dev/null
 done
-n=$(stats | jq .users_live)
-[[ "$n" == "3" ]] && bad "users_live = $n   <- three people now exist" \
-                  || good "users_live = $n"
+expect_eq "naive order consumer: 3 deliveries -> 3 audit rows" "$(stat_count naive order.apply)" "3"
 
-# =====================================================================
-bold "2. POST /safe/users x3  -- same Idempotency-Key"
+echo "=== 2. Safe order consumer: monotonic guard absorbs redelivery ==="
 reset
+resp=$(curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","payload":{"order_id":"order-2","status":"paid","version":1}}')
+mid=$(jq -r .message_id <<<"$resp")
 for i in 1 2 3; do
-  dim "  attempt $i: $(call POST /safe/users '{"name":"Somchai"}' -H "Idempotency-Key: $KEY")"
+  curl -s -X POST "$HOST/safe/consume?topic=orders" >/dev/null
+  curl -s -X POST "$HOST/_duplicate" -H 'Content-Type: application/json' -d "{\"message_id\":$mid}" >/dev/null
 done
-n=$(stats | jq .users_live)
-a=$(stats | jq .audit_entries)
-[[ "$n" == "1" ]] && good "users_live = $n, audit_entries = $a  <- replayed twice" \
-                  || bad  "users_live = $n"
-dim "  replay header check:"
-curl -sD- -o /dev/null -X POST "$BASE/safe/users" \
-  -H "Idempotency-Key: $KEY" -H 'Content-Type: application/json' \
-  -d '{"name":"Somchai"}' | grep -i 'idempotent-replayed' || true
+expect_eq "safe order consumer: 3 deliveries, same version -> 1 audit row" "$(stat_count safe order.apply)" "1"
 
-# =====================================================================
-bold "3. Same key, different payload  -- client bug, not a retry"
-dim "  $(call POST /safe/users '{"name":"Malee"}' -H "Idempotency-Key: $KEY")"
-good "expect 422 key_reused_with_different_payload"
-
-# =====================================================================
-bold "4. Key scoping  -- another tenant must not see that response"
-dim "  $(call POST /safe/users '{"name":"Somchai"}' -H "Idempotency-Key: $KEY" -H 'X-Api-Key: other-tenant')"
-good "expect 201 with a NEW id: the key namespace is per-tenant"
-
-# =====================================================================
-bold "5. Five concurrent retries, one key"
+echo "=== 3. Out-of-order delivery is harmless under the version guard ==="
 reset
-CKEY="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
-for i in 1 2 3 4 5; do
-  curl -s -o /dev/null -w "  parallel $i -> %{http_code}\n" -X POST "$BASE/safe/users" \
-    -H "Idempotency-Key: $CKEY" -H 'Content-Type: application/json' \
-    -d '{"name":"Racer"}' &
-done
-wait
-n=$(stats | jq .users_live)
-[[ "$n" == "1" ]] && good "users_live = $n  <- one winner; losers got 409 or a replay" \
-                  || bad  "users_live = $n"
+curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","payload":{"order_id":"order-3","status":"shipped","version":5}}' >/dev/null
+curl -s -X POST "$HOST/safe/consume?topic=orders" >/dev/null   # applies v5
+curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","payload":{"order_id":"order-3","status":"paid","version":2}}' >/dev/null
+resp=$(curl -s -X POST "$HOST/safe/consume?topic=orders")      # stale v2 arrives late
+expect_eq "stale version rejected, not applied" "$(jq -r .applied <<<"$resp")" "false"
 
-# =====================================================================
-bold "6. Crash after the write  (X-Chaos: fail-after-write)"
+echo "=== 4. Naive notification consumer sends twice on redelivery ==="
 reset
-CHKEY="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
-dim "  naive, attempt 1: $(call POST /naive/users '{"name":"Crash"}' -H 'X-Chaos: fail-after-write')"
-dim "  naive, retry:     $(call POST /naive/users '{"name":"Crash"}')"
-bad "naive users_live = $(stats | jq .users_live)  <- the 500 still committed a row"
+resp=$(curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"notifications","payload":{"order_id":"order-4","body":"hi"}}')
+mid=$(jq -r .message_id <<<"$resp")
+curl -s -X POST "$HOST/naive/consume?topic=notifications" >/dev/null
+curl -s -X POST "$HOST/_duplicate" -H 'Content-Type: application/json' -d "{\"message_id\":$mid}" >/dev/null
+curl -s -X POST "$HOST/naive/consume?topic=notifications" >/dev/null
+expect_eq "naive notification consumer: 2 deliveries -> 2 sends" "$(stat_count naive notification.send)" "2"
 
+echo "=== 5. Safe notification consumer: inbox absorbs redelivery ==="
 reset
-dim "  safe, attempt 1:  $(call POST /safe/users '{"name":"Crash"}' -H "Idempotency-Key: $CHKEY" -H 'X-Chaos: fail-after-write')"
-dim "  safe, retry:      $(call POST /safe/users '{"name":"Crash"}' -H "Idempotency-Key: $CHKEY")"
-good "safe users_live = $(stats | jq .users_live)  <- rolled back, key released, retry re-ran"
+resp=$(curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"notifications","payload":{"order_id":"order-5","body":"hi"}}')
+mid=$(jq -r .message_id <<<"$resp")
+curl -s -X POST "$HOST/safe/consume?topic=notifications" >/dev/null
+curl -s -X POST "$HOST/_duplicate" -H 'Content-Type: application/json' -d "{\"message_id\":$mid}" >/dev/null
+curl -s -X POST "$HOST/safe/consume?topic=notifications" >/dev/null
+expect_eq "safe notification consumer: 2 deliveries -> 1 send" "$(stat_count safe notification.send)" "1"
 
-# =====================================================================
-bold "7. PUT x3  -- assignment should be a no-op after the first"
+echo "=== 6. Producer-side dedupe: same dedupe_key + same payload -> replay, not a new message ==="
 reset
-UID1="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
-for i in 1 2 3; do
-  dim "  naive attempt $i: $(call PUT "/naive/users/$UID1" '{"name":"Nok"}')"
-done
-bad "naive: version climbed, audit_entries = $(stats | jq .audit_entries)"
+p='{"order_id":"order-6","status":"paid","version":1}'
+r1=$(publish orders "order-6-key" "$p")
+r2=$(publish orders "order-6-key" "$p")
+id1=$(jq -r .message_id <<<"$r1"); id2=$(jq -r .message_id <<<"$r2")
+expect_eq "same dedupe_key replays the same message id" "$id2" "$id1"
+expect_eq "second publish reports deduped=true" "$(jq -r .deduped <<<"$r2")" "true"
 
+echo "=== 7. Producer-side dedupe: same key, different payload -> 422 ==="
 reset
-UID2="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
-for i in 1 2 3; do
-  dim "  safe attempt $i:  $(call PUT "/safe/users/$UID2" '{"name":"Nok"}')"
-done
-good "safe: 201 then 200 200, version stayed 1, audit_entries = $(stats | jq .audit_entries)"
+publish orders "order-7-key" '{"order_id":"order-7","status":"paid","version":1}' >/dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","dedupe_key":"order-7-key","payload":{"order_id":"order-7","status":"CANCELLED","version":1}}')
+expect_eq "mismatched payload under reused dedupe_key -> 422" "$code" "422"
 
-# =====================================================================
-bold "8. PATCH  -- accumulation vs assignment"
+echo "=== 8. Crash before commit: effect rolled back, redelivery re-executes cleanly ==="
 reset
-call POST /naive/information '{"phone":"0812345678","age":30}' >/dev/null
-IID=$(curl -s "$BASE/naive/information" | jq -r '.[0].id')
-for i in 1 2 3; do
-  dim "  naive increment $i: $(call PATCH "/naive/information/$IID" '{"age_increment":1}')"
-done
-bad "naive age = $(curl -s "$BASE/naive/information/$IID" | jq .age)  <- depends on retry count"
+resp=$(curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","payload":{"order_id":"order-8","status":"paid","version":1}}')
+mid=$(jq -r .message_id <<<"$resp")
+crash=$(curl -s -X POST "$HOST/safe/consume?topic=orders&chaos=crash_before_commit")
+expect_eq "crash_before_commit reports applied=false" "$(jq -r .applied <<<"$crash")" "false"
+expect_eq "order not created after rollback" "$(curl -s "$HOST/_stats" | jq -r .orders)" "0"
+curl -s -X POST "$HOST/_expire_lease" -H 'Content-Type: application/json' -d "{\"message_id\":$mid}" >/dev/null
+retry=$(curl -s -X POST "$HOST/safe/consume?topic=orders")
+expect_eq "retry after lease expiry applies cleanly" "$(jq -r .applied <<<"$retry")" "true"
+expect_eq "exactly one audit row after crash + retry" "$(stat_count safe order.apply)" "1"
 
-ETAG=$(curl -sD- -o /dev/null "$BASE/safe/information/$IID" | grep -i '^etag:' | tr -d '\r' | awk '{print $2}')
-for i in 1 2 3; do
-  dim "  safe merge $i:     $(call PATCH "/safe/information/$IID" '{"age":31}' -H "If-Match: $ETAG")"
-done
-good "safe age = $(curl -s "$BASE/safe/information/$IID" | jq .age)  <- identical patch never advances the version, so the stale If-Match keeps working"
-
-# =====================================================================
-bold "9. POST /information  -- the unique constraint does the deduping"
+echo "=== 9. Crash after commit, before ack: redelivery is a safe no-op ==="
 reset
-dim "  naive 1st: $(call POST /naive/information '{"phone":"0899999999","age":25}')"
-dim "  naive 2nd: $(call POST /naive/information '{"phone":"0899999999","age":25}')"
-bad "naive: 500 with a leaked constraint name -- data safe, API unusable"
+resp=$(curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","payload":{"order_id":"order-9","status":"paid","version":1}}')
+mid=$(jq -r .message_id <<<"$resp")
+crash=$(curl -s -X POST "$HOST/safe/consume?topic=orders&chaos=crash_after_commit_before_ack")
+expect_eq "crash_after_commit_before_ack still applies the effect" "$(jq -r .applied <<<"$crash")" "true"
+expect_eq "but does not ack" "$(jq -r .acked <<<"$crash")" "false"
+curl -s -X POST "$HOST/_duplicate" -H 'Content-Type: application/json' -d "{\"message_id\":$mid}" >/dev/null
+redelivery=$(curl -s -X POST "$HOST/safe/consume?topic=orders")
+expect_eq "redelivery rejected by the version guard, not double-applied" "$(jq -r .applied <<<"$redelivery")" "false"
+expect_eq "exactly one audit row" "$(stat_count safe order.apply)" "1"
 
+echo "=== 10. Transactional outbox: order update -> relay -> notification, end to end ==="
 reset
-dim "  safe 1st:  $(call POST /safe/information '{"phone":"0899999999","age":25}')"
-dim "  safe 2nd:  $(call POST /safe/information '{"phone":"0899999999","age":25}')"
-good "safe: 201 then 200 with the same id. No key table involved."
+curl -s -X POST "$HOST/publish" -H 'Content-Type: application/json' \
+  -d '{"topic":"orders","payload":{"order_id":"order-10","status":"paid","version":1}}' >/dev/null
+curl -s -X POST "$HOST/safe/consume?topic=orders" >/dev/null
+pending=$(curl -s "$HOST/_stats" | jq -r .outbox_pending)
+expect_eq "outbox has one pending event after the order applies" "$pending" "1"
+curl -s -X POST "$HOST/relay/run" >/dev/null
+curl -s -X POST "$HOST/safe/consume?topic=notifications" >/dev/null
+sent=$(curl -s "$HOST/_stats" | jq -r .notifications_sent)
+expect_eq "relay + safe notification consumer delivers exactly one send" "$sent" "1"
 
-# =====================================================================
-bold "10. DELETE x3"
-reset
-call POST /safe/users '{"name":"Gone"}' -H "Idempotency-Key: $(uuidgen)" >/dev/null
-DID=$(curl -s "$BASE/safe/users" | jq -r '.[0].id')
-for i in 1 2 3; do
-  dim "  naive attempt $i: $(call DELETE "/naive/users/$DID")"
-done
-bad "naive audit_entries = $(stats | jq .audit_entries)  <- side effect fired 3x for 1 deletion"
-
-reset
-call POST /safe/users '{"name":"Gone"}' -H "Idempotency-Key: $(uuidgen)" >/dev/null
-DID=$(curl -s "$BASE/safe/users" | jq -r '.[0].id')
-for i in 1 2 3; do
-  dim "  safe attempt $i:  $(call DELETE "/safe/users/$DID")"
-done
-good "safe: 204 then 410 410. audit_entries = $(stats | jq .audit_entries)"
-
-# =====================================================================
-bold "11. TTL expiry  -- a retry after the window is a NEW operation"
-reset
-TKEY="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)"
-dim "  before: $(call POST /safe/users '{"name":"Late"}' -H "Idempotency-Key: $TKEY")"
-curl -sX POST "$BASE/_expire_keys" >/dev/null
-curl -sX POST "$BASE/_sweep" >/dev/null
-dim "  after:  $(call POST /safe/users '{"name":"Late"}' -H "Idempotency-Key: $TKEY")"
-bad "users_live = $(stats | jq .users_live)  <- this is why the TTL must be documented"
-
-bold "final stats"
-stats | jq .
+echo
+echo "=== summary: $pass passed, $fail failed ==="
+[[ "$fail" -eq 0 ]]

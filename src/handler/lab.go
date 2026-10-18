@@ -6,73 +6,103 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Stats is the scoreboard. Run a request three times, then read this.
-//
-// An idempotent endpoint leaves users/information/audit_entries flat
-// after the first call. A broken one increments them every time.
-func (h *Handler) Stats(c *gin.Context) {
-	var s struct {
-		Users          int `json:"users_live"`
-		UsersDeleted   int `json:"users_deleted"`
-		Information    int `json:"information_live"`
-		AuditEntries   int `json:"audit_entries"`
-		KeysTotal      int `json:"idempotency_keys"`
-		KeysInProgress int `json:"idempotency_keys_in_progress"`
-		KeysCompleted  int `json:"idempotency_keys_completed"`
-	}
-	err := h.pool.QueryRow(c, `
-		SELECT (SELECT count(*) FROM users       WHERE deleted_at IS NULL),
-		       (SELECT count(*) FROM users       WHERE deleted_at IS NOT NULL),
-		       (SELECT count(*) FROM information WHERE deleted_at IS NULL),
-		       (SELECT count(*) FROM audit_log),
-		       (SELECT count(*) FROM idempotency_keys),
-		       (SELECT count(*) FROM idempotency_keys WHERE state = 'in_progress'),
-		       (SELECT count(*) FROM idempotency_keys WHERE state = 'completed')`).
-		Scan(&s.Users, &s.UsersDeleted, &s.Information,
-			&s.AuditEntries, &s.KeysTotal, &s.KeysInProgress, &s.KeysCompleted)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, s)
+type auditCount struct {
+	Consumer string `json:"consumer"`
+	Op       string `json:"op"`
+	Count    int64  `json:"count"`
 }
 
-// Reset wipes everything so you can re-run an experiment from zero.
+type queueCount struct {
+	Topic  string `json:"topic"`
+	Status string `json:"status"`
+	Count  int64  `json:"count"`
+}
+
+// Stats is the scoreboard: run a message through naive and safe consumers
+// the same number of times, then compare audit_log counts here. A
+// correct consumer applies an effect once per logical change; a naive one
+// applies it once per delivery.
+func (h *Handler) Stats(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	rows, err := h.pool.Query(ctx, `
+		SELECT consumer, op, count(*) FROM audit_log GROUP BY consumer, op ORDER BY consumer, op`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var audits []auditCount
+	for rows.Next() {
+		var a auditCount
+		if err := rows.Scan(&a.Consumer, &a.Op, &a.Count); err != nil {
+			rows.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		audits = append(audits, a)
+	}
+	rows.Close()
+
+	qrows, err := h.pool.Query(ctx, `
+		SELECT topic, status, count(*) FROM queue_messages GROUP BY topic, status ORDER BY topic, status`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	var queues []queueCount
+	for qrows.Next() {
+		var q queueCount
+		if err := qrows.Scan(&q.Topic, &q.Status, &q.Count); err != nil {
+			qrows.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		queues = append(queues, q)
+	}
+	qrows.Close()
+
+	var orders, notificationsSent, inboxRows, outboxPending, outboxPublished int64
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM orders`).Scan(&orders); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM notifications_sent`).Scan(&notificationsSent); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM inbox_processed`).Scan(&inboxRows); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE NOT published`).Scan(&outboxPending); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE published`).Scan(&outboxPublished); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"audit_log":          audits,
+		"queue_messages":     queues,
+		"orders":             orders,
+		"notifications_sent": notificationsSent,
+		"inbox_processed":    inboxRows,
+		"outbox_pending":     outboxPending,
+		"outbox_published":   outboxPublished,
+	})
+}
+
+// Reset truncates every lab table without restarting the process --
+// cheaper than a full docker compose cycle between manual experiments.
 func (h *Handler) Reset(c *gin.Context) {
-	if _, err := h.pool.Exec(c, `
-		TRUNCATE users, information, audit_log, idempotency_keys RESTART IDENTITY`); err != nil {
-		fail(c, err)
+	_, err := h.pool.Exec(c.Request.Context(), `
+		TRUNCATE queue_messages, inbox_processed, orders, notifications_sent,
+		         outbox_events, audit_log RESTART IDENTITY`)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"reset": true})
-}
-
-// Sweep deletes expired idempotency keys. In production this is a cron
-// or a background goroutine, batched so it does not hold long locks.
-func (h *Handler) Sweep(c *gin.Context) {
-	tag, err := h.pool.Exec(c, `
-		DELETE FROM idempotency_keys
-		 WHERE ctid IN (
-		   SELECT ctid FROM idempotency_keys WHERE expires_at < now() LIMIT 10000
-		 )`)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"swept": tag.RowsAffected()})
-}
-
-// ExpireKeys forces every stored key to look expired, so you can watch
-// a "retry after the TTL" turn into a brand-new operation without
-// waiting 24 hours. Lab-only, obviously.
-func (h *Handler) ExpireKeys(c *gin.Context) {
-	tag, err := h.pool.Exec(c, `
-		UPDATE idempotency_keys
-		   SET expires_at = now() - interval '1 second',
-		       lease_expires_at = now() - interval '1 second'`)
-	if err != nil {
-		fail(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"expired": tag.RowsAffected()})
 }
