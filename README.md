@@ -10,23 +10,34 @@ Every mutation appends to `audit_log`. That table is the observable side effect:
 ## Run it
 
 ```bash
-make up      # postgres + migrations
-make run     # go mod tidy, then serve on :8080
-make test    # the full experiment suite (needs curl + jq)
+docker compose up -d --build   # postgres on :5433 (schema applied on first boot) + the app on :8080
+make test                      # the full experiment suite (needs curl + jq)
+make reset                     # POST /_reset: truncate every table without restarting
+docker compose down -v         # stop everything and wipe the db volume
 ```
 
-`make down` wipes the volume. `POST /_reset` truncates without restarting.
+The `app` service reaches Postgres at `db:5432` on the compose network. See
+`docker-compose.yml` for the env and `Dockerfile` for the image build.
 
-### Or run it in Docker
+To run the app on the host instead, start only the database and point
+`DATABASE_URL` at the published port:
 
 ```bash
-./scripts/cli.sh up       # build the app image, start db + app, wait for db healthy
-./scripts/cli.sh logs     # follow app logs
-./scripts/cli.sh shell    # shell into the running app container
-./scripts/cli.sh down     # stop everything (keeps the db volume)
+docker compose up -d db
+DATABASE_URL='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable' go run .
 ```
 
-`db` and `app` are wired together on the compose network — `app` reaches Postgres at `db:5432`. See `docker-compose.yml` for the exact env and `Dockerfile` for the image build.
+`make psql` opens a shell on the database.
+
+## Docs
+
+Open these in a browser; they are self-contained HTML.
+
+- [`docs/HTTP-idempotency-sequence-flow.html`](docs/HTTP-idempotency-sequence-flow.html) — the contract hop by hop: which layer declares, honours, supplies and enforces idempotency, stepped through per method.
+- [`docs/safe-post-users.html`](docs/safe-post-users.html) — sequence diagram of `POST /safe/users`: the atomic claim, effect + receipt in one commit, a lost response, and the replayed retry.
+- [`docs/idempotency-key.html`](docs/idempotency-key.html) — lifecycle of an `idempotency_keys` row: `in_progress` → `completed` → swept, and the 5xx release path.
+
+The two diagrams are generated with [Archify](https://github.com/tt-a1i/archify) from the `.json` files next to them. Edit the JSON and re-run `archify deliver` rather than editing the HTML.
 
 ## Why two resources
 
