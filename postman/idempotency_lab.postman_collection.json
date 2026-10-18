@@ -1,0 +1,4199 @@
+    {
+  "info": {
+    "_postman_id": "b95ab7c4-fbf9-572e-adfd-62f5dedd7312",
+    "name": "idempotency_lab",
+    "description": "HTTP idempotency lab (branch idem-api-HTTP-flow). Two parallel route trees over the same resources: /naive has no protection, /safe uses the mechanism that suits each method. Every mutation appends to audit_log, so GET /_stats shows whether a retry duplicated anything.\n\nStart the lab (`make up && make run`), keep {{baseUrl}} at http://localhost:8080, then browse \"1. Endpoints\" by hand or run \"2. Scenarios\" in the Collection Runner.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Endpoints",
+      "item": [
+        {
+          "name": "Lab controls",
+          "item": [
+            {
+              "name": "GET /_stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                },
+                "description": "Scoreboard. Read it after a run: an idempotent endpoint leaves these counts flat after the first call."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "42bd6ff2-9af0-58c0-9413-82bca3f528fc"
+            },
+            {
+              "name": "POST /_reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate users, information, audit_log and idempotency_keys."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "cd920882-4fcd-52dd-a993-5bc604fbb609"
+            },
+            {
+              "name": "POST /_sweep",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_sweep",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_sweep"
+                  ]
+                },
+                "description": "Delete expired idempotency keys (batched, 10000 rows). Production runs this on a schedule."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "2fe2a284-6858-518b-a7be-c9a7d7826060"
+            },
+            {
+              "name": "POST /_expire_keys",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_expire_keys",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_expire_keys"
+                  ]
+                },
+                "description": "Lab-only: make every key look expired, to test the TTL boundary without waiting 24h."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "9a31153d-32ef-50d6-a6d9-557f3d49b068"
+            },
+            {
+              "name": "GET /swagger/doc.json",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/swagger/doc.json",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "swagger",
+                    "doc.json"
+                  ]
+                },
+                "description": "The generated Swagger 2.0 spec. The UI is at {{baseUrl}}/swagger/index.html."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "41ac09e2-31b2-522b-83bd-224811db204e"
+            }
+          ],
+          "description": "Scoreboard, reset, and TTL controls. Mounted at the root, no /naive or /safe prefix.",
+          "id": "fa76c023-5963-5872-bea3-0ce5625c81dd"
+        },
+        {
+          "name": "Users - naive",
+          "item": [
+            {
+              "name": "GET /naive/users",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users"
+                  ]
+                },
+                "description": "List live users."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "2ef09e06-92c7-5e3a-8ab1-887a486249e0"
+            },
+            {
+              "name": "GET /naive/users/:id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Read one user. Saves the ETag into {{etag}}. Send it as If-None-Match to get 304."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 304, 404\", () => pm.expect([200, 304, 404]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"etag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "3024c4ad-ec11-5b9a-9465-40618fec10eb"
+            },
+            {
+              "name": "POST /naive/users",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users"
+                  ]
+                },
+                "description": "Create a user with no protection. Every send creates another row. Saves the id into {{userId}}.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 201, 500\", () => pm.expect([201, 500]).to.include(pm.response.code));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"userId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "1719dd52-2dc3-5073-be3e-3ca21b067227"
+            },
+            {
+              "name": "PUT /naive/users/:id",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Upsert that still bumps version and appends an audit row on every identical call.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "5215844e-62a6-51e4-b991-4376204f526f"
+            },
+            {
+              "name": "PATCH /naive/users/:id",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Accumulating patch: name = name || append_name. Each send changes the state again.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"append_name\": \"!\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 404\", () => pm.expect([200, 404]).to.include(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "id": "72fe3e18-0508-5127-b46a-33dd7340854b"
+            },
+            {
+              "name": "DELETE /naive/users/:id",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Hard delete. Audits on every call, even when nothing was deleted."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 204, 404\", () => pm.expect([204, 404]).to.include(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "id": "fa725645-be5c-5104-97f5-a3634b30426f"
+            }
+          ],
+          "description": "No protection anywhere. The control group.",
+          "id": "07f32178-300c-556c-9c40-4689fd98f966"
+        },
+        {
+          "name": "Users - safe",
+          "item": [
+            {
+              "name": "GET /safe/users",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "description": "List live users."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1f568be0-fbc3-59f8-9af4-4efa4ac79f88"
+            },
+            {
+              "name": "GET /safe/users/:id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Read one user. Saves the ETag into {{etag}}. Send it as If-None-Match to get 304."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 304, 404\", () => pm.expect([200, 304, 404]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"etag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f1b6fc07-8199-5cb7-bf83-d5ef7cbe71b9"
+            },
+            {
+              "name": "POST /safe/users",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "description": "Same handler as /naive, behind the Idempotency-Key middleware. Resend with the same {{idemKey}} to get the stored response replayed (Idempotent-Replayed: true). Change the body with the same key to get 422. Saves the id into {{userId}}.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 201, 409, 422\", () => pm.expect([201, 409, 422]).to.include(pm.response.code));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"userId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "f250f945-69b5-5aab-96ab-0f7021b7942c"
+            },
+            {
+              "name": "PUT /safe/users/:id",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Assignment guarded by a content hash: 201 on create, 200 on replace, version unchanged on an identical write. Optional If-Match / If-None-Match: *.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 201, 412\", () => pm.expect([200, 201, 412]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"etag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "28c384c9-6b68-50ef-b12f-f7269051fe6e"
+            },
+            {
+              "name": "PATCH /safe/users/:id",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "{{etag}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "JSON Merge Patch with a mandatory If-Match. Run GET /safe/users/:id first so {{etag}} is current. Without If-Match: 428. Stale ETag: 412.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok Patched\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 412, 428\", () => pm.expect([200, 412, 428]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"etag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "8b8fed07-f566-56b8-b58a-120e6d79b806"
+            },
+            {
+              "name": "DELETE /safe/users/:id",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                },
+                "description": "Guarded soft delete: 204 the first time, 410 after that (tombstone), 404 if it never existed."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 204, 404, 410\", () => pm.expect([204, 404, 410]).to.include(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "id": "e9338ef4-3d0e-5982-b42a-768f28639c4c"
+            }
+          ],
+          "description": "Each method protected by the mechanism that suits it. POST needs an Idempotency-Key because users have no naturally unique field.",
+          "id": "424a86eb-38f3-5075-ac99-53afa7eb3551"
+        },
+        {
+          "name": "Information - naive",
+          "item": [
+            {
+              "name": "GET /naive/information",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information"
+                  ]
+                },
+                "description": "List live information records."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1092bee3-791b-586e-9319-de6b51a85bfb"
+            },
+            {
+              "name": "GET /naive/information/:id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "description": "Read one record. Saves the ETag into {{infoEtag}}."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 304, 404\", () => pm.expect([200, 304, 404]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"infoEtag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "8208e708-c26b-5a61-891e-0d88daea8293"
+            },
+            {
+              "name": "POST /naive/information",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information"
+                  ]
+                },
+                "description": "The unique phone index still blocks a duplicate, but the second send gets a 500 that leaks the constraint name. Saves the id into {{infoId}}.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0812345678\",\n  \"age\": 30\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 201, 500\", () => pm.expect([201, 500]).to.include(pm.response.code));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"infoId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "8d6c657a-e538-5c8d-ae6b-a88c26ac8a09"
+            },
+            {
+              "name": "PATCH /naive/information/:id",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "description": "age = age + age_increment. Every retry ages the person again.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age_increment\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 404\", () => pm.expect([200, 404]).to.include(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "id": "fbe6f9f4-0ced-5910-a6ec-eb826e38430a"
+            },
+            {
+              "name": "DELETE /naive/information/:id",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "description": "Hard delete, audits on every call."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 204, 404\", () => pm.expect([204, 404]).to.include(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "id": "cd91a263-150b-5693-b239-d33d136f0d41"
+            }
+          ],
+          "description": "No protection. There is no naive PUT: a two-field replacement is idempotent almost by accident.",
+          "id": "d0a2a691-3225-5df5-b272-1529c752f9aa"
+        },
+        {
+          "name": "Information - safe",
+          "item": [
+            {
+              "name": "GET /safe/information",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information"
+                  ]
+                },
+                "description": "List live information records."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "e7f3062e-93e1-52d5-9a4c-9eb88dddc94c"
+            },
+            {
+              "name": "GET /safe/information/:id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "description": "Read one record. Saves the ETag into {{infoEtag}}."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 304, 404\", () => pm.expect([200, 304, 404]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"infoEtag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "dba7c2ed-0f89-5dbd-8a00-b6b4f52974fa"
+            },
+            {
+              "name": "POST /safe/information",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information"
+                  ]
+                },
+                "description": "No Idempotency-Key needed: the unique phone index is the dedup. A repeat returns 200 with the existing record and Idempotent-Replayed: true. Saves the id into {{infoId}}.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0812345678\",\n  \"age\": 30\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 201\", () => pm.expect([200, 201]).to.include(pm.response.code));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"infoId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "0957ecc2-b96b-58fa-89c3-9d5aa0815e9b"
+            },
+            {
+              "name": "PUT /safe/information/:id",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "description": "Full replacement at a client-known URI: 201 on create, 200 on replace. 409 if the phone belongs to another record.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0812345678\",\n  \"age\": 31\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 201, 409\", () => pm.expect([200, 201, 409]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"infoEtag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b34a69a1-7b3b-53bc-a47d-d03e776b20bb"
+            },
+            {
+              "name": "PATCH /safe/information/:id",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "{{infoEtag}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "description": "Merge patch with absolute values and a mandatory If-Match. Run GET /safe/information/:id first so {{infoEtag}} is current.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age\": 32\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 200, 409, 412, 428\", () => pm.expect([200, 409, 412, 428]).to.include(pm.response.code));",
+                      "if (pm.response.headers.get(\"ETag\")) pm.collectionVariables.set(\"infoEtag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "91e18a35-8aad-5672-ac9c-c98989bcc20d"
+            },
+            {
+              "name": "DELETE /safe/information/:id",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "description": "Guarded soft delete: 204, then 410."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 204, 404, 410\", () => pm.expect([204, 404, 410]).to.include(pm.response.code));"
+                    ]
+                  }
+                }
+              ],
+              "id": "32a55bb8-7963-502d-83c5-e60b75be2011"
+            }
+          ],
+          "description": "information has a unique phone, so a UNIQUE index gives POST idempotency for free.",
+          "id": "3e772665-975f-54ee-9b7a-57ebb6ea93ae"
+        }
+      ],
+      "description": "Every route of the lab, one request each, for poking at by hand. Requests share collection variables: create something first (POST) and the id lands in {{userId}} / {{infoId}}; a GET stores the ETag for the PATCH requests.",
+      "id": "7be5e649-d8a8-51ed-ab19-b8ea84175b2f"
+    },
+    {
+      "name": "2. Scenarios",
+      "item": [
+        {
+          "name": "01 POST without protection duplicates",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "409ca098-b14b-5115-9180-49de499b2a64"
+            },
+            {
+              "name": "Attempt 1",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "2e2480dc-c24e-56da-b523-5b9c77fff4f1"
+            },
+            {
+              "name": "Attempt 2 (client retried)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "969f9e4d-1562-5433-b59d-335f6b267347"
+            },
+            {
+              "name": "Attempt 3 (client retried)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "d39c7578-cc66-56c7-a3c0-0c4395e47082"
+            },
+            {
+              "name": "Check: three users exist",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 3  (one per attempt -- the bug)\", () => pm.expect(pm.response.json().users_live).to.eql(3));",
+                      "pm.test(\"audit_entries = 3  (side effect fired 3x)\", () => pm.expect(pm.response.json().audit_entries).to.eql(3));"
+                    ]
+                  }
+                }
+              ],
+              "id": "031940f5-0c59-5e23-979a-8a9d7b4a03a1"
+            }
+          ],
+          "description": "A client sends the same POST three times, e.g. after timeouts. The server picks the id, so every attempt creates another user.",
+          "id": "accaab8f-f847-55d9-9a96-4c6262b934e3"
+        },
+        {
+          "name": "02 Idempotency-Key replays the first response",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "ab822880-01f8-5e95-a42f-df31d814e0e6"
+            },
+            {
+              "name": "Attempt 1 (generates a key)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "pm.collectionVariables.set(\"firstUserId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "c128c758-c6e9-5a89-89f7-f6e42832647a"
+            },
+            {
+              "name": "Attempt 2, same key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"same id as the first attempt\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"firstUserId\")));",
+                      "pm.test(\"Idempotent-Replayed: true\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replayed\")).to.eql(\"true\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "25903e73-98ba-54ac-b413-9e6d10b8e2be"
+            },
+            {
+              "name": "Attempt 3, same key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"same id as the first attempt\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"firstUserId\")));",
+                      "pm.test(\"Idempotent-Replayed: true\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replayed\")).to.eql(\"true\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1db5d467-6110-53a5-8a74-5036773f3b53"
+            },
+            {
+              "name": "Check: one user, one audit row",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 1  (retries were replayed)\", () => pm.expect(pm.response.json().users_live).to.eql(1));",
+                      "pm.test(\"audit_entries = 1  (effect ran once)\", () => pm.expect(pm.response.json().audit_entries).to.eql(1));",
+                      "pm.test(\"idempotency_keys_completed = 1  (one receipt)\", () => pm.expect(pm.response.json().idempotency_keys_completed).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f51b94f6-730d-5aa1-944c-cb5f56dc8911"
+            }
+          ],
+          "description": "Same three attempts, now with one Idempotency-Key. The first runs the handler and stores a receipt in the same transaction; the retries get that stored response back.",
+          "id": "c372a3dc-6aa3-541c-88fb-48e32902652e"
+        },
+        {
+          "name": "03 Same key, different body is rejected",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b321aa9f-7498-58af-b3d5-2ffb4238de8c"
+            },
+            {
+              "name": "Create with a key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "9b6c45aa-f3ff-5ce4-b76f-6281140dddfc"
+            },
+            {
+              "name": "Reuse the key for different content",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Malee\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                      "pm.test(\"error = key_reused_with_different_payload\", () => pm.expect(pm.response.json().error).to.eql(\"key_reused_with_different_payload\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "eb4a10fa-2644-5e96-9c47-ba6c548352db"
+            },
+            {
+              "name": "Check: still one user",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 1  (the mismatched request did not run)\", () => pm.expect(pm.response.json().users_live).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "743dbfd0-80d0-5df1-9437-3d64fff2f6a1"
+            }
+          ],
+          "description": "The middleware fingerprints sha256(method, path, body). Same key with a different body is a client bug, not a retry, so it gets 422 instead of someone else's response.",
+          "id": "015a1558-fa40-5b59-bb3a-854334100b19"
+        },
+        {
+          "name": "04 Keys are scoped per tenant",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "0cece550-eaee-55df-a90b-af6fbeff5f7e"
+            },
+            {
+              "name": "Tenant demo creates with key K",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "pm.collectionVariables.set(\"firstUserId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "9d70ee72-036d-50e3-835b-2df5eb10698e"
+            },
+            {
+              "name": "Tenant other-tenant sends the same key K",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  },
+                  {
+                    "key": "X-Api-Key",
+                    "value": "other-tenant"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Somchai\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"a NEW id, not tenant demo's response\", () => pm.expect(pm.response.json().id).to.not.eql(pm.collectionVariables.get(\"firstUserId\")));"
+                    ]
+                  }
+                }
+              ],
+              "id": "be0f0770-c414-559e-8ac6-a9c5958efeb5"
+            },
+            {
+              "name": "Check: two users",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 2  (one per tenant)\", () => pm.expect(pm.response.json().users_live).to.eql(2));",
+                      "pm.test(\"idempotency_keys = 2  (one key row per (tenant, endpoint, key))\", () => pm.expect(pm.response.json().idempotency_keys).to.eql(2));"
+                    ]
+                  }
+                }
+              ],
+              "id": "e97daadc-cad8-5f6e-adbb-e155e5418fff"
+            }
+          ],
+          "description": "Keys are unique per (X-Api-Key, endpoint, key). Without that scope, tenant B could replay tenant A's response body.",
+          "id": "da678448-a7d8-59c8-9d43-788671de1cb5"
+        },
+        {
+          "name": "05 Crash after the write: rollback vs duplicate",
+          "item": [
+            {
+              "name": "Reset (naive run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "82f8b7f6-a73b-5287-9f38-f42d89f82a3e"
+            },
+            {
+              "name": "Naive attempt: 500 after the insert",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "X-Chaos",
+                    "value": "fail-after-write"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Crash\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 500\", () => pm.response.to.have.status(500));"
+                    ]
+                  }
+                }
+              ],
+              "id": "d3c2fa9a-63e0-5d46-a7d4-d883c0c1a8ad"
+            },
+            {
+              "name": "Naive retry",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Crash\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c2a25c3b-9088-5378-adc3-56b445df2815"
+            },
+            {
+              "name": "Check naive: two users",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 2  (the 500 had already committed a row)\", () => pm.expect(pm.response.json().users_live).to.eql(2));"
+                    ]
+                  }
+                }
+              ],
+              "id": "3e60588d-bb21-5687-ad97-42b7efa7c66f"
+            },
+            {
+              "name": "Reset (safe run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "6f9ac201-a190-5498-8ca9-45bc09a3174d"
+            },
+            {
+              "name": "Safe attempt: 500 after the insert",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  },
+                  {
+                    "key": "X-Chaos",
+                    "value": "fail-after-write"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Crash\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 500\", () => pm.response.to.have.status(500));"
+                    ]
+                  }
+                }
+              ],
+              "id": "e6a37e03-14e4-58ae-82df-747f1a56e22a"
+            },
+            {
+              "name": "Check safe: nothing committed, key released",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 0  (transaction rolled back)\", () => pm.expect(pm.response.json().users_live).to.eql(0));",
+                      "pm.test(\"idempotency_keys = 0  (5xx releases the claim)\", () => pm.expect(pm.response.json().idempotency_keys).to.eql(0));"
+                    ]
+                  }
+                }
+              ],
+              "id": "74cc703a-f045-5d84-96fb-bfa80242078d"
+            },
+            {
+              "name": "Safe retry, same key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Crash\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f6f1e6d3-bd8c-575a-9ee2-c4fb28eef3d2"
+            },
+            {
+              "name": "Check safe: exactly one user",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 1  (the retry genuinely re-ran)\", () => pm.expect(pm.response.json().users_live).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c161685a-76c2-5ece-ac5c-e15700ad4046"
+            }
+          ],
+          "description": "X-Chaos: fail-after-write returns 500 after the insert. On /naive the row already autocommitted, so the retry duplicates it. On /safe the insert and the receipt share one transaction: the 500 rolls both back and releases the key.",
+          "id": "9e5b2625-b4d6-5442-8abb-bd489f6b6b99"
+        },
+        {
+          "name": "06 PUT: assignment should be a no-op after the first",
+          "item": [
+            {
+              "name": "Reset (naive run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b481b8b9-dbf7-59de-b570-13dfad7b87f4"
+            },
+            {
+              "name": "Pick a client-side id",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                },
+                "description": "Only generates {{putId}}; the response is not used."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"putId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1da3eaba-ab67-5c25-a757-53ed577a7ee3"
+            },
+            {
+              "name": "Naive PUT 1",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{putId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{putId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"version 1\", () => pm.expect(pm.response.json().version).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "ce1661c0-b167-545d-9ca1-6c90528898c8"
+            },
+            {
+              "name": "Naive PUT 2 (identical)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{putId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{putId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"version climbed to 2 -- the bug\", () => pm.expect(pm.response.json().version).to.eql(2));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1346a530-1711-50a3-8cec-06ae479a56ac"
+            },
+            {
+              "name": "Naive PUT 3 (identical)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{putId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{putId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"version climbed to 3\", () => pm.expect(pm.response.json().version).to.eql(3));"
+                    ]
+                  }
+                }
+              ],
+              "id": "0c7cba68-5e8b-58ee-9e02-be940586b034"
+            },
+            {
+              "name": "Check naive: three audit rows",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit_entries = 3  (one per identical write)\", () => pm.expect(pm.response.json().audit_entries).to.eql(3));"
+                    ]
+                  }
+                }
+              ],
+              "id": "449a6d6c-ef1e-518a-98a8-b4c3154e2ff6"
+            },
+            {
+              "name": "Reset (safe run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "7cafe884-b1ab-51e0-8c9e-27ae017c44ad"
+            },
+            {
+              "name": "Safe PUT 1 (creates)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{putId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{putId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c754f6cf-b652-5552-bf41-264775b44b91"
+            },
+            {
+              "name": "Safe PUT 2 (identical)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{putId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{putId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"version stays 1\", () => pm.expect(pm.response.json().version).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "6b12cc8b-98b7-5bd6-8307-357ab988d305"
+            },
+            {
+              "name": "Safe PUT 3 (identical)",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{putId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{putId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Nok\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"version stays 1\", () => pm.expect(pm.response.json().version).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "0efafe9d-4e6b-578d-a257-87449f1de5ae"
+            },
+            {
+              "name": "Check safe: one audit row",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit_entries = 1  (only the real change is audited)\", () => pm.expect(pm.response.json().audit_entries).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "d5c6be4b-81be-5de7-af44-c95979b52610"
+            }
+          ],
+          "description": "PUT is idempotent because it is an assignment. The naive upsert still bumps version and audits every call; the safe one compares a content hash. Note 201 then 200: different status codes, identical server state.",
+          "id": "64f1a042-5533-50ec-aaa2-08a46ca2879f"
+        },
+        {
+          "name": "07 PATCH: accumulation vs assignment",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "a9382b31-121f-58aa-83ed-081f3256c693"
+            },
+            {
+              "name": "Create a record",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0812345678\",\n  \"age\": 30\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"infoId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "470b5829-ff82-5df6-956a-9e3085bd4612"
+            },
+            {
+              "name": "Naive increment 1",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age_increment\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "bfd9e10f-5566-5a06-bf37-9e1a5a5ecc33"
+            },
+            {
+              "name": "Naive increment 2 (retry)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age_increment\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c8b2ba3e-b0e3-5598-acea-860548b01b7e"
+            },
+            {
+              "name": "Naive increment 3 (retry)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age_increment\": 1\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"age = 33 -- depends on how many retries happened\", () => pm.expect(pm.response.json().age).to.eql(33));"
+                    ]
+                  }
+                }
+              ],
+              "id": "eac9ed7c-0480-5ba4-9166-9753be5ef4ad"
+            },
+            {
+              "name": "Safe: GET for the ETag",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.collectionVariables.set(\"infoEtag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "50aa2aca-826c-58f6-bcd4-97a3f709e156"
+            },
+            {
+              "name": "Safe: PATCH without If-Match",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age\": 31\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 428\", () => pm.response.to.have.status(428));"
+                    ]
+                  }
+                }
+              ],
+              "id": "082cacee-175f-5ee8-8779-a3db65773a6e"
+            },
+            {
+              "name": "Safe: PATCH age=31 with If-Match",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "{{infoEtag}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age\": 31\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"age = 31\", () => pm.expect(pm.response.json().age).to.eql(31));",
+                      "pm.collectionVariables.set(\"infoEtag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "45b50c2b-fe96-59cc-9425-b98678df4e57"
+            },
+            {
+              "name": "Safe: same PATCH again (retry)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "If-Match",
+                    "value": "{{infoEtag}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information/{{infoId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information",
+                    "{{infoId}}"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"age\": 31\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"still 31, version unchanged\", () => pm.expect(pm.response.json().age).to.eql(31));"
+                    ]
+                  }
+                }
+              ],
+              "id": "44a2939b-f766-508a-8b61-0fe7578bda03"
+            }
+          ],
+          "description": "age = age + n depends on how many times it ran. {\"age\": 31} gives the same result every time; If-Match adds concurrency control on top. A retry that reuses the current ETag succeeds as a true no-op because an identical patch does not advance the version.",
+          "id": "3ff42611-2f24-5599-a2ba-58882380f856"
+        },
+        {
+          "name": "08 Unique constraint dedups POST without a key table",
+          "item": [
+            {
+              "name": "Reset (naive run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "7b08f29d-337e-5223-97f1-641ec7a6c383"
+            },
+            {
+              "name": "Naive create",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0899999999\",\n  \"age\": 25\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "fc0b5141-ae5c-5a42-addb-1dc26f89c476"
+            },
+            {
+              "name": "Naive retry",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "information"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0899999999\",\n  \"age\": 25\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 500\", () => pm.response.to.have.status(500));",
+                      "pm.test(\"leaks the constraint name\", () => pm.expect(pm.response.text()).to.include(\"information_phone_live\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b2ef63dc-4167-5048-aa31-872440fa79ae"
+            },
+            {
+              "name": "Reset (safe run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "ac441cff-bdf4-519c-9c07-24dc5d7aed32"
+            },
+            {
+              "name": "Safe create",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0899999999\",\n  \"age\": 25\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "pm.collectionVariables.set(\"firstInfoId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "ad6ecc9a-c9ff-5bef-8aa1-f483f6137a86"
+            },
+            {
+              "name": "Safe retry",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/information",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "information"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"phone\": \"0899999999\",\n  \"age\": 25\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"same id as the first attempt\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"firstInfoId\")));",
+                      "pm.test(\"Idempotent-Replayed: true\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replayed\")).to.eql(\"true\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "99850949-6760-590e-8c0f-c937a15d5f21"
+            }
+          ],
+          "description": "information.phone has a UNIQUE index, so the database refuses the duplicate either way. Naive surfaces it as a 500; safe catches 23505 and returns the existing record with 200.",
+          "id": "d75ebc61-e085-5828-9167-c76346a082cd"
+        },
+        {
+          "name": "09 DELETE: side effect once, then 410",
+          "item": [
+            {
+              "name": "Reset (naive run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "dac6cde0-f030-590c-8350-da98753a68ba"
+            },
+            {
+              "name": "Create a user",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Gone\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"userId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "e3aa484b-67ac-5474-91df-14e3fb9b4ee7"
+            },
+            {
+              "name": "Naive delete 1",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                    ]
+                  }
+                }
+              ],
+              "id": "0231ef7c-eafa-5c88-bacd-1c5015586fea"
+            },
+            {
+              "name": "Naive delete 2 (retry)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                    ]
+                  }
+                }
+              ],
+              "id": "549fbbda-9cc4-518a-a246-29eae8961ad3"
+            },
+            {
+              "name": "Naive delete 3 (retry)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                    ]
+                  }
+                }
+              ],
+              "id": "3d9e2930-3c4c-525a-a6fa-cc788bdbe137"
+            },
+            {
+              "name": "Check naive: delete audited 3x",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit_entries = 4  (1 create + 3 deletes for one deletion)\", () => pm.expect(pm.response.json().audit_entries).to.eql(4));"
+                    ]
+                  }
+                }
+              ],
+              "id": "07575851-260e-5266-9d81-4d9d365e902f"
+            },
+            {
+              "name": "Reset (safe run)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "0f617321-d03d-5ded-81c0-16c7a9c8bac2"
+            },
+            {
+              "name": "Create a user",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Gone\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"userId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "7cf1fd9a-ff71-59e9-9919-45a519a939f4"
+            },
+            {
+              "name": "Safe delete 1",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                    ]
+                  }
+                }
+              ],
+              "id": "91207b15-2bf1-5135-b4fd-48323a7db39d"
+            },
+            {
+              "name": "Safe delete 2 (retry)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 410\", () => pm.response.to.have.status(410));"
+                    ]
+                  }
+                }
+              ],
+              "id": "9f0b1a89-1b40-5498-a32d-1f4269c38113"
+            },
+            {
+              "name": "Safe delete 3 (retry)",
+              "request": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 410\", () => pm.response.to.have.status(410));"
+                    ]
+                  }
+                }
+              ],
+              "id": "4a353655-dcf7-5c9a-bc62-a140f52fb7fb"
+            },
+            {
+              "name": "Check safe: delete audited once",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit_entries = 2  (1 create + 1 delete)\", () => pm.expect(pm.response.json().audit_entries).to.eql(2));",
+                      "pm.test(\"users_deleted = 1  (tombstone, not a hard delete)\", () => pm.expect(pm.response.json().users_deleted).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "13b21d5a-8740-5f4a-8390-d63a1e416d9b"
+            }
+          ],
+          "description": "The postcondition of DELETE is absence. Naive hard-deletes and audits every call; safe soft-deletes behind a guard, so retries get 410 (you already did this) rather than 404 (never existed).",
+          "id": "4c24f71e-f135-578c-a5f0-b587a7caf4cb"
+        },
+        {
+          "name": "10 Conditional GET with ETag",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c8754e44-b038-5723-a66c-5188ce4fbe65"
+            },
+            {
+              "name": "Create a user",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Cache\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code < 300) pm.collectionVariables.set(\"userId\", pm.response.json().id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "34854b6b-ce89-5bc5-9db1-84551bf6f1d4"
+            },
+            {
+              "name": "GET: returns an ETag",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.collectionVariables.set(\"etag\", pm.response.headers.get(\"ETag\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "cab04cee-3646-5e9b-bbdf-40740f905ce5"
+            },
+            {
+              "name": "GET with If-None-Match",
+              "request": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "If-None-Match",
+                    "value": "{{etag}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users/{{userId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users",
+                    "{{userId}}"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 304\", () => pm.response.to.have.status(304));"
+                    ]
+                  }
+                }
+              ],
+              "id": "44e65a9f-88c4-544a-8933-29898f9468a8"
+            }
+          ],
+          "description": "GET is safe and idempotent by construction. The version-backed ETag lets a client revalidate cheaply with 304 Not Modified.",
+          "id": "322c7ee3-d4b0-5324-9c64-7e3222b4a1fb"
+        },
+        {
+          "name": "11 After the TTL a retry is a new operation",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "8f17da13-b857-520a-99c1-a74c80492828"
+            },
+            {
+              "name": "Create with a key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Late\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b5ec1024-3e70-5a24-934d-d8943f3dd291"
+            },
+            {
+              "name": "Expire every key",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_expire_keys",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_expire_keys"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "d63f5e4f-e5e6-5d3d-9ec8-3cef69dc66d3"
+            },
+            {
+              "name": "Sweep expired keys",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_sweep",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_sweep"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "5471c827-bcc0-5aa0-a5fa-471c8db4ea65"
+            },
+            {
+              "name": "Retry with the same key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  },
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{idemKey}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/users",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Late\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                    ]
+                  }
+                }
+              ],
+              "id": "a4bf38dd-a709-57d7-82b3-caebb5308bd2"
+            },
+            {
+              "name": "Check: two users",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"users_live = 2  (the receipt was gone, so the retry ran again)\", () => pm.expect(pm.response.json().users_live).to.eql(2));"
+                    ]
+                  }
+                }
+              ],
+              "id": "2972389e-dcb4-515a-8833-a41012ed7c46"
+            }
+          ],
+          "description": "Receipts live for 24h. Once a key is swept, the same key is treated as a brand-new request -- which is why the TTL has to be documented for clients.",
+          "id": "d5681aae-f895-5f7d-8209-41f4f3ecbe1c"
+        }
+      ],
+      "description": "Runnable experiments. Each scenario folder starts with POST /_reset and asserts the outcome with tests, so you can run a single scenario (or all of them) with the Collection Runner and read the test results. Concurrent retries (409 + Retry-After) cannot be reproduced by the sequential runner; `make test` covers that case with parallel curl.",
+      "id": "1d811ba6-e8d4-5119-8dfc-a6c9c2aa7d05"
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "idemKey",
+      "value": "4f2a91c8-9d3e-4b7a-8f11-2c6e5d0a7b39"
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "infoId",
+      "value": ""
+    },
+    {
+      "key": "etag",
+      "value": ""
+    },
+    {
+      "key": "infoEtag",
+      "value": ""
+    },
+    {
+      "key": "putId",
+      "value": ""
+    },
+    {
+      "key": "firstUserId",
+      "value": ""
+    },
+    {
+      "key": "firstInfoId",
+      "value": ""
+    }
+  ]
+}

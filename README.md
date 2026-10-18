@@ -93,6 +93,29 @@ The target runs a pinned `swag` (`SWAG_VERSION`, default `v1.16.6`) via
 `github.com/swaggo/swag` version in `go.mod`, or the generated `docs.go`
 may not compile.
 
+## Postman
+
+Import [`postman/idempotency_lab.postman_collection.json`](postman/idempotency_lab.postman_collection.json)
+(Postman → Import). `{{baseUrl}}` defaults to `http://localhost:8080`.
+
+- **1. Endpoints** — every route, one request each, grouped by tree and
+  resource. A `POST` saves the new id into `{{userId}}` / `{{infoId}}` and a
+  `GET` saves the `ETag`, so you can create → read → patch → delete by hand.
+- **2. Scenarios** — eleven runnable experiments: naive vs. keyed `POST`,
+  key reuse with a different body (`422`), per-tenant key scope, a crash
+  after the write, `PUT`/`PATCH`/`DELETE` retries, the unique-constraint
+  dedup, conditional `GET`, and TTL expiry. Each one starts with
+  `POST /_reset` and asserts the outcome with tests, so run a scenario (or
+  the whole folder) in the Collection Runner and read the results.
+
+Concurrent retries (`409` + `Retry-After`) need parallel requests, which the
+runner doesn't do; `make test` covers that case. To run the scenarios from
+the terminal:
+
+```bash
+npx newman run postman/idempotency_lab.postman_collection.json --folder "2. Scenarios"
+```
+
 ## Docs
 
 Open these in a browser; they are self-contained HTML.
