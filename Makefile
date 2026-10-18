@@ -1,9 +1,9 @@
 .PHONY: up down run tidy test psql reset swagger
 
-up:            ## start postgres and apply migrations
-	docker compose up -d
+up:            ## start postgres and apply migrations (the app runs on the host via `make run`)
+	docker compose up -d db
 	@echo "waiting for postgres..."
-	@until docker compose exec -T db pg_isready -U lab -d lab >/dev/null 2>&1; do sleep 1; done
+	@until docker compose exec -T db pg_isready -U postgres -d postgres >/dev/null 2>&1; do sleep 1; done
 	@echo "ready"
 
 down:          ## stop and wipe the database volume
@@ -12,7 +12,7 @@ down:          ## stop and wipe the database volume
 tidy:
 	go mod tidy
 
-run: tidy      ## start the API on :8080
+run:
 	go run ./cmd/server/**.go
 
 test:          ## run the full experiment suite against a running server
