@@ -97,6 +97,29 @@ The target runs a pinned `swag` (`SWAG_VERSION`, default `v1.16.6`) via
 `github.com/swaggo/swag` version in `go.mod`, or the generated `docs.go`
 may not compile.
 
+## Postman
+
+Import [`postman/idempotency_lab.postman_collection.json`](postman/idempotency_lab.postman_collection.json)
+(Postman → Import). `{{baseUrl}}` defaults to `http://localhost:8080`.
+
+- **1. Endpoints** — every route, one request each: lab controls, the
+  producer, naive and safe consumers (including both `?chaos=` points), the
+  outbox relay, and the chaos endpoints. `POST /publish` saves the
+  `message_id` into `{{messageId}}`, which `/_duplicate` and
+  `/_expire_lease` use.
+- **2. Scenarios** — the same ten experiments as `scripts/experiments.sh`:
+  naive vs. guarded order consumers, out-of-order delivery, naive vs. inbox
+  notification consumers, producer `dedupe_key` replay and `422`, both
+  crash windows, and the transactional outbox end to end. Each one starts
+  with `POST /_reset` and asserts the outcome with tests, so run a scenario
+  (or the whole folder) in the Collection Runner and read the results.
+
+To run the scenarios from the terminal:
+
+```bash
+npx newman run postman/idempotency_lab.postman_collection.json --folder "2. Scenarios"
+```
+
 ## Docs
 
 Open these in a browser; they are self-contained HTML.

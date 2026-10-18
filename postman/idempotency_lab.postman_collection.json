@@ -1,0 +1,3023 @@
+{
+  "info": {
+    "_postman_id": "72dde85a-89f8-5083-b0e3-56909c25d322",
+    "name": "idempotency_lab",
+    "description": "Async queue idempotency lab (branch idem-api-aync-queue-flow). A Postgres-backed broker with at-least-once delivery, naive vs safe consumers, a transactional outbox relay, and chaos endpoints for redelivery and lease expiry. Every applied effect appends to audit_log, so GET /_stats shows whether a redelivery duplicated anything.\n\nStart the lab (`make up && make run`), keep {{baseUrl}} at http://localhost:8080, then browse \"1. Endpoints\" by hand or run \"2. Scenarios\" in the Collection Runner.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Endpoints",
+      "item": [
+        {
+          "name": "Lab controls",
+          "item": [
+            {
+              "name": "GET /_stats",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                },
+                "description": "Scoreboard: audit_log counts per consumer/op, queue_messages per topic/status, and row counts for orders, notifications, inbox and outbox."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "41c2d887-ccea-5013-834a-6e648c4ba320"
+            },
+            {
+              "name": "POST /_reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1e8ac996-f0d1-52d5-9c17-2216bfed44b4"
+            },
+            {
+              "name": "GET /swagger/doc.json",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/swagger/doc.json",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "swagger",
+                    "doc.json"
+                  ]
+                },
+                "description": "The generated Swagger 2.0 spec. The UI is at {{baseUrl}}/swagger/index.html."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "887e78f8-7e28-5686-8f13-959b57fe9e17"
+            }
+          ],
+          "description": "Scoreboard and reset. Mounted at the root.",
+          "id": "a8e293a9-357b-532a-9975-e6b2b2bf4597"
+        },
+        {
+          "name": "Producer",
+          "item": [
+            {
+              "name": "POST /publish (orders)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "description": "Publish an order status change. Saves message_id into {{messageId}}. The safe consumer applies it only if version is higher than what is stored.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-1\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "3d1ea7a2-3da2-5cca-8390-20a272c9fba6"
+            },
+            {
+              "name": "POST /publish (orders, with dedupe_key)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "description": "Producer-side dedupe. Same dedupe_key + same payload returns the existing message (deduped=true); same key + different payload is 422.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"dedupe_key\": \"order-1:v1\",\n  \"payload\": {\n    \"order_id\": \"order-1\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is one of 201, 422\", () => pm.expect([201, 422]).to.include(pm.response.code));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "82af3e4c-6104-5bd9-a654-1a3a09f56763"
+            },
+            {
+              "name": "POST /publish (notifications)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "description": "Publish a notification directly. Normally the outbox relay produces these from order updates.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"notifications\",\n  \"payload\": {\n    \"order_id\": \"order-1\",\n    \"body\": \"order order-1 is now paid\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "a7d254d7-0ffa-5f2b-a729-33c1be87ff71"
+            }
+          ],
+          "description": "Stand-in for an external system publishing onto the Postgres-backed broker. Topics: orders, notifications.",
+          "id": "6f3ed6ee-f690-5b38-98ff-15242649aa55"
+        },
+        {
+          "name": "Consumers",
+          "item": [
+            {
+              "name": "POST /naive/consume?topic=orders",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                },
+                "description": "Claim one order message and apply it unconditionally. Returns {\"message\": \"no messages available\"} when the topic is empty."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "a820541c-2b2c-5ff6-9f3e-d3a3228d1422"
+            },
+            {
+              "name": "POST /naive/consume?topic=notifications",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                },
+                "description": "Claim one notification and send it unconditionally: every redelivery is a second send."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "88315dcf-9fca-5f52-a3f6-5b1a1f7873f7"
+            },
+            {
+              "name": "POST /safe/consume?topic=orders",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                },
+                "description": "Version-guarded upsert plus an outbox_events row in the same transaction. A stale or duplicate version is skipped and acked."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "0dc25cb6-98b1-5951-baf4-726065db989a"
+            },
+            {
+              "name": "POST /safe/consume?topic=notifications",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                },
+                "description": "Inbox pattern: INSERT INTO inbox_processed ON CONFLICT DO NOTHING in the same transaction as the send."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "182eeecd-9924-54bb-ab84-d492f7b1ff2a"
+            },
+            {
+              "name": "POST /safe/consume?topic=orders&chaos=crash_before_commit",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders&chaos=crash_before_commit",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    },
+                    {
+                      "key": "chaos",
+                      "value": "crash_before_commit"
+                    }
+                  ]
+                },
+                "description": "Roll back mid-transaction. The message stays leased until the lease expires (or POST /_expire_lease)."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f5dd7ad8-b0b8-5a49-8e47-610da9f1b90f"
+            },
+            {
+              "name": "POST /safe/consume?topic=orders&chaos=crash_after_commit_before_ack",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders&chaos=crash_after_commit_before_ack",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    },
+                    {
+                      "key": "chaos",
+                      "value": "crash_after_commit_before_ack"
+                    }
+                  ]
+                },
+                "description": "Commit the effect but skip the ack. A redelivery is then rejected by the version guard."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "3796df3a-af8a-5e89-8b3c-81721eb366b7"
+            }
+          ],
+          "description": "Claim one message per call (?topic=orders|notifications, optional ?lease_seconds=, default 5). /naive applies every delivery; /safe uses the mechanism that fits the resource.",
+          "id": "382860cf-73ca-57ea-a1e7-de298c69c895"
+        },
+        {
+          "name": "Outbox relay",
+          "item": [
+            {
+              "name": "POST /relay/run",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/relay/run?limit=10",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "relay",
+                    "run"
+                  ],
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "10"
+                    }
+                  ]
+                },
+                "description": "Publish up to ?limit= unpublished outbox_events rows as notifications messages, with dedupe_key outbox:{id} so a relay retry cannot double-publish."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f3e8af58-ed87-5bc7-b686-8668292b7b8a"
+            }
+          ],
+          "description": "The relay half of the transactional outbox.",
+          "id": "4c97e60f-c543-5d65-978b-93fdfe854fd6"
+        },
+        {
+          "name": "Chaos (lab-only)",
+          "item": [
+            {
+              "name": "POST /_duplicate",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Reset {{messageId}} to pending regardless of status, including done -- simulates a broker replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "80187999-dd07-51e4-a0fd-16a4985f00fc"
+            },
+            {
+              "name": "POST /_expire_lease",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_expire_lease",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_expire_lease"
+                  ]
+                },
+                "description": "Backdate the lease on {{messageId}} so the next claim can steal it, without waiting out the real lease.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c4e4ea4f-4fbb-5c5e-b9df-b902ea861ea8"
+            }
+          ],
+          "description": "Fault injection for the redelivery and stuck-lease paths.",
+          "id": "1bf5cb2e-35ff-57c7-811c-aa78413924ab"
+        }
+      ],
+      "description": "Every route of the lab, one request each. POST /publish saves message_id into {{messageId}}, which the chaos requests use.",
+      "id": "4aa889c3-9e50-5499-9eb4-625c1640c182"
+    },
+    {
+      "name": "2. Scenarios",
+      "item": [
+        {
+          "name": "01 Naive order consumer duplicates every redelivery",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "120b66a8-ad80-5624-9ce1-49d1cd7327ba"
+            },
+            {
+              "name": "Publish order-1 v1",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-1\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "370766ae-1fbd-5c2f-a506-d472f5c37511"
+            },
+            {
+              "name": "Delivery 1",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "ce587001-ee1f-51b6-9048-ea793a304a66"
+            },
+            {
+              "name": "Force redelivery (/_duplicate)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Simulate the broker redelivering {{messageId}} -- an ack that never reached it, or a rebalance replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "d6171899-e29d-5aed-ae78-2cde5f0297d4"
+            },
+            {
+              "name": "Delivery 2 (redelivered)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "7ababda5-5310-50ba-bf51-bb40dff3dbcc"
+            },
+            {
+              "name": "Force redelivery (/_duplicate)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Simulate the broker redelivering {{messageId}} -- an ack that never reached it, or a rebalance replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b6951a00-eddb-54af-a9d5-f9f559c00351"
+            },
+            {
+              "name": "Delivery 3 (redelivered)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1f60db31-5688-5deb-af36-e8c10e40bc1e"
+            },
+            {
+              "name": "Check: three audit rows for one change",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit naive order.apply = 3  (one per delivery -- the bug)\", () => {",
+                      "  const row = (pm.response.json().audit_log || []).find(r => r.consumer === \"naive\" && r.op === \"order.apply\");",
+                      "  pm.expect(row ? row.count : 0).to.eql(3);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "id": "3d7ed9b6-c5af-5090-9eea-d025a4489840"
+            }
+          ],
+          "description": "At-least-once delivery means the same message can arrive again. The naive consumer applies the effect on every delivery.",
+          "id": "1da05acc-aa8f-558c-9d92-4af3220115a0"
+        },
+        {
+          "name": "02 Version guard absorbs redelivery",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "69474550-9c2c-5abc-acca-ff37c2a119d4"
+            },
+            {
+              "name": "Publish order-2 v1",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-2\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "cbcfd58f-6962-5970-bdc6-bf74c6f40f40"
+            },
+            {
+              "name": "Delivery 1",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b965c427-cfaf-5b3d-8bbf-db0c9bdd3936"
+            },
+            {
+              "name": "Force redelivery (/_duplicate)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Simulate the broker redelivering {{messageId}} -- an ack that never reached it, or a rebalance replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "6ca78f3e-11b3-53a7-b834-172faaf6ee13"
+            },
+            {
+              "name": "Delivery 2 (redelivered)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = false\", () => pm.expect(pm.response.json().applied).to.eql(false));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "466599b7-f820-57cf-9842-77d6baa8c790"
+            },
+            {
+              "name": "Force redelivery (/_duplicate)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Simulate the broker redelivering {{messageId}} -- an ack that never reached it, or a rebalance replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "bfd02f74-859a-5a66-b2ad-a2ea5916e84c"
+            },
+            {
+              "name": "Delivery 3 (redelivered)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = false\", () => pm.expect(pm.response.json().applied).to.eql(false));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c44a02e5-3aa7-5ad8-8483-90aba4cfea4a"
+            },
+            {
+              "name": "Check: one audit row",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit safe order.apply = 1  (WHERE orders.version < incoming skipped the repeats)\", () => {",
+                      "  const row = (pm.response.json().audit_log || []).find(r => r.consumer === \"safe\" && r.op === \"order.apply\");",
+                      "  pm.expect(row ? row.count : 0).to.eql(1);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "id": "21cde855-1c02-5b9d-978c-ff6d291a7cf6"
+            }
+          ],
+          "description": "An order status update is naturally idempotent once it is an assignment guarded by a monotonic version. No dedup table needed: a repeat fails the guard and is acked as a no-op.",
+          "id": "c497b1e6-4e73-503b-b5cb-ce1072d7f6d3"
+        },
+        {
+          "name": "03 Out-of-order delivery is harmless",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f14792de-09b2-55f7-bac6-134d39447f74"
+            },
+            {
+              "name": "Publish order-3 v5 (shipped)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-3\",\n    \"status\": \"shipped\",\n    \"version\": 5\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "cf736d82-da38-5088-a278-04efec603adc"
+            },
+            {
+              "name": "Apply v5",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "829922bd-e0f7-5d44-be49-c763c1f793d6"
+            },
+            {
+              "name": "Publish order-3 v2 (paid) -- arrives late",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-3\",\n    \"status\": \"paid\",\n    \"version\": 2\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "c35efd67-ee9c-54ec-a719-08db2ad7a6db"
+            },
+            {
+              "name": "Late v2 is rejected",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = false\", () => pm.expect(pm.response.json().applied).to.eql(false));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1231cdde-56ee-5a1b-8618-aa22a6ec8605"
+            }
+          ],
+          "description": "The same guard handles reordering: an older version that arrives after a newer one is skipped instead of rolling the order back.",
+          "id": "ccbdda80-99d0-5459-990e-955aed5e2333"
+        },
+        {
+          "name": "04 Naive notification consumer sends twice",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "1c95dec7-7de8-5753-a52e-7abc6010c1f9"
+            },
+            {
+              "name": "Publish a notification",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"notifications\",\n  \"payload\": {\n    \"order_id\": \"order-4\",\n    \"body\": \"hi\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "9ef3fd37-29e7-511a-ac34-ecd1f2444aed"
+            },
+            {
+              "name": "Delivery 1",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "129ff21b-234a-5062-ad5c-15a9a73f2e53"
+            },
+            {
+              "name": "Force redelivery (/_duplicate)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Simulate the broker redelivering {{messageId}} -- an ack that never reached it, or a rebalance replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "3355db07-b2d9-53d0-911c-d9c39c6ca5e0"
+            },
+            {
+              "name": "Delivery 2 (redelivered)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/naive/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "naive",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "b9b2ed2e-1cca-50ea-8bea-1655f8510b6e"
+            },
+            {
+              "name": "Check: two sends",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit naive notification.send = 2  (the customer got it twice)\", () => {",
+                      "  const row = (pm.response.json().audit_log || []).find(r => r.consumer === \"naive\" && r.op === \"notification.send\");",
+                      "  pm.expect(row ? row.count : 0).to.eql(2);",
+                      "});",
+                      "pm.test(\"notifications_sent = 2  (rows in notifications_sent)\", () => pm.expect(pm.response.json().notifications_sent).to.eql(2));"
+                    ]
+                  }
+                }
+              ],
+              "id": "835e12e1-0d9a-5d9d-b3a8-d8017cbcdd88"
+            }
+          ],
+          "description": "Sending is not naturally idempotent: there is no assignment that makes sending twice equal to sending once.",
+          "id": "b050325c-d5af-5557-9c3b-03cecc8b163f"
+        },
+        {
+          "name": "05 Inbox absorbs redelivery",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "16c04d2d-ad82-5057-9398-075b21400805"
+            },
+            {
+              "name": "Publish a notification",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"notifications\",\n  \"payload\": {\n    \"order_id\": \"order-5\",\n    \"body\": \"hi\"\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "572d35fc-6244-5e12-8865-8e40196c5e4e"
+            },
+            {
+              "name": "Delivery 1",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "952f394b-a024-5a85-8e41-80c03133a33d"
+            },
+            {
+              "name": "Force redelivery (/_duplicate)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Simulate the broker redelivering {{messageId}} -- an ack that never reached it, or a rebalance replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "ab0c618e-b78a-52d6-b7c8-89cd0fc283f8"
+            },
+            {
+              "name": "Delivery 2 (redelivered)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = false\", () => pm.expect(pm.response.json().applied).to.eql(false));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "86c7f2b4-1265-5370-b692-b427cf0f25d9"
+            },
+            {
+              "name": "Check: one send",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit safe notification.send = 1  (inbox_processed already had this message_id)\", () => {",
+                      "  const row = (pm.response.json().audit_log || []).find(r => r.consumer === \"safe\" && r.op === \"notification.send\");",
+                      "  pm.expect(row ? row.count : 0).to.eql(1);",
+                      "});",
+                      "pm.test(\"notifications_sent = 1  (one row)\", () => pm.expect(pm.response.json().notifications_sent).to.eql(1));",
+                      "pm.test(\"inbox_processed = 1  (one inbox claim)\", () => pm.expect(pm.response.json().inbox_processed).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "79403c30-bdb4-57c3-884e-5ccecc154c53"
+            }
+          ],
+          "description": "The inbox pattern: claim (consumer, message_id) with INSERT ... ON CONFLICT DO NOTHING in the same transaction as the send. Zero rows inserted means already handled.",
+          "id": "7f8984a5-cb47-5788-a6b9-c85e0b2ca4d2"
+        },
+        {
+          "name": "06 Producer dedupe_key replays the same message",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c0c89d27-a5e0-5afa-89ff-c93c72cb58a5"
+            },
+            {
+              "name": "Publish with dedupe_key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"dedupe_key\": \"order-6-key\",\n  \"payload\": {\n    \"order_id\": \"order-6\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);",
+                      "pm.test(\"deduped = false  (first publish)\", () => pm.expect(pm.response.json().deduped).to.eql(false));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f0b805ae-92e5-5d76-8ca6-a313f84c147a"
+            },
+            {
+              "name": "Producer retries the same publish",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"dedupe_key\": \"order-6-key\",\n  \"payload\": {\n    \"order_id\": \"order-6\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "pm.test(\"deduped = true  (no second row)\", () => pm.expect(pm.response.json().deduped).to.eql(true));",
+                      "pm.test(\"same message_id\", () => pm.expect(pm.response.json().message_id).to.eql(Number(pm.collectionVariables.get(\"messageId\"))));"
+                    ]
+                  }
+                }
+              ],
+              "id": "2f598c9b-64c6-5bc0-8791-3460a3b21e37"
+            }
+          ],
+          "description": "dedupe_key is the producer-side idempotency knob (like Kafka's idempotent producer or SQS FIFO's MessageDeduplicationId), unique per (topic, dedupe_key).",
+          "id": "e7957e1c-d56e-5bf0-8cbf-1dadf072d145"
+        },
+        {
+          "name": "07 Same dedupe_key, different payload is rejected",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "84447346-e4f7-5899-8ba0-5a8bef7d44b2"
+            },
+            {
+              "name": "Publish with dedupe_key",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"dedupe_key\": \"order-7-key\",\n  \"payload\": {\n    \"order_id\": \"order-7\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "84d11bf9-91fa-5553-8539-0e91eec1f373"
+            },
+            {
+              "name": "Reuse the key for different content",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"dedupe_key\": \"order-7-key\",\n  \"payload\": {\n    \"order_id\": \"order-7\",\n    \"status\": \"CANCELLED\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                      "pm.test(\"error = dedupe_key_reused_with_different_payload  (client bug, not a retry)\", () => pm.expect(pm.response.json().error).to.eql(\"dedupe_key_reused_with_different_payload\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "63ef8b24-13ec-53e4-b3a6-9e8bd1164b7d"
+            }
+          ],
+          "description": "The broker stores a sha256 of the canonical payload. A reused key with different content is surfaced as 422, the queue-side analogue of a mismatched HTTP fingerprint.",
+          "id": "38c738e3-7439-5939-9eba-c9dcb8f1287a"
+        },
+        {
+          "name": "08 Crash before commit: rollback, then a clean retry",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "6ad1329a-f236-5e50-842f-a988f39b5bbe"
+            },
+            {
+              "name": "Publish order-8 v1",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-8\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "95792ed3-d015-566a-bf3a-230c9b7e773e"
+            },
+            {
+              "name": "Consume with crash_before_commit",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders&chaos=crash_before_commit",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    },
+                    {
+                      "key": "chaos",
+                      "value": "crash_before_commit"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = false\", () => pm.expect(pm.response.json().applied).to.eql(false));",
+                      "pm.test(\"acked = false\", () => pm.expect(pm.response.json().acked).to.eql(false));"
+                    ]
+                  }
+                }
+              ],
+              "id": "fce4c1d6-a760-5862-95dd-92a3e817ce71"
+            },
+            {
+              "name": "Check: nothing committed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"orders = 0  (order update rolled back)\", () => pm.expect(pm.response.json().orders).to.eql(0));",
+                      "pm.test(\"outbox_pending = 0  (outbox row rolled back with it)\", () => pm.expect(pm.response.json().outbox_pending).to.eql(0));"
+                    ]
+                  }
+                }
+              ],
+              "id": "e6aa2958-9e27-5490-a321-b0acffdf4219"
+            },
+            {
+              "name": "Expire the lease (/_expire_lease)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_expire_lease",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_expire_lease"
+                  ]
+                },
+                "description": "The message is still leased by the crashed worker. Expire the lease so the next claim can take it.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "98363f05-2b82-5595-a39d-ea4062cc1d02"
+            },
+            {
+              "name": "Retry claims it again",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "dd5f368f-e498-5091-b291-517f1186513c"
+            },
+            {
+              "name": "Check: exactly one effect",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit safe order.apply = 1  (crash + retry = one apply)\", () => {",
+                      "  const row = (pm.response.json().audit_log || []).find(r => r.consumer === \"safe\" && r.op === \"order.apply\");",
+                      "  pm.expect(row ? row.count : 0).to.eql(1);",
+                      "});",
+                      "pm.test(\"orders = 1  (one order)\", () => pm.expect(pm.response.json().orders).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "79506524-8fb5-5a6d-8f71-6c3aab15739a"
+            }
+          ],
+          "description": "The order update and its outbox row share one transaction, so a crash before COMMIT leaves no half-done state. The message stays leased; after the lease expires the retry runs cleanly.",
+          "id": "dcb156b7-5dfd-5728-a792-42571ff50562"
+        },
+        {
+          "name": "09 Crash after commit, before ack: redelivery is a no-op",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "76802fb6-8ede-5b3b-96b6-e056176c5cfa"
+            },
+            {
+              "name": "Publish order-9 v1",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-9\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "751d3c64-c3b3-5f0c-95bf-d4214e47d635"
+            },
+            {
+              "name": "Consume with crash_after_commit_before_ack",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders&chaos=crash_after_commit_before_ack",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    },
+                    {
+                      "key": "chaos",
+                      "value": "crash_after_commit_before_ack"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));",
+                      "pm.test(\"acked = false\", () => pm.expect(pm.response.json().acked).to.eql(false));"
+                    ]
+                  }
+                }
+              ],
+              "id": "3f5eb5cc-376e-57ea-99b9-580d49f79262"
+            },
+            {
+              "name": "Broker redelivers (/_duplicate)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/_duplicate",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_duplicate"
+                  ]
+                },
+                "description": "Simulate the broker redelivering {{messageId}} -- an ack that never reached it, or a rebalance replay.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"message_id\": {{messageId}}\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "c17a4f48-2aba-5aa4-b9d6-a65d405298b3"
+            },
+            {
+              "name": "Redelivery is rejected by the guard",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = false\", () => pm.expect(pm.response.json().applied).to.eql(false));",
+                      "pm.test(\"acked = true\", () => pm.expect(pm.response.json().acked).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "2d6d3784-673b-507e-ae87-f4718d30ca19"
+            },
+            {
+              "name": "Check: exactly one effect",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"audit safe order.apply = 1  (not double-applied)\", () => {",
+                      "  const row = (pm.response.json().audit_log || []).find(r => r.consumer === \"safe\" && r.op === \"order.apply\");",
+                      "  pm.expect(row ? row.count : 0).to.eql(1);",
+                      "});"
+                    ]
+                  }
+                }
+              ],
+              "id": "c38adfa8-a6bd-5841-a153-e60fce2ea077"
+            }
+          ],
+          "description": "The effect is durable but the broker never heard the ack, so it will redeliver. The version guard turns that redelivery into a no-op.",
+          "id": "1f87aa25-b52f-5127-9591-a9861370d778"
+        },
+        {
+          "name": "10 Transactional outbox, end to end",
+          "item": [
+            {
+              "name": "Reset",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_reset",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_reset"
+                  ]
+                },
+                "description": "Truncate every lab table so this scenario starts from zero."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                    ]
+                  }
+                }
+              ],
+              "id": "af401936-5c9f-585c-bfaa-ab2c7b61ac5e"
+            },
+            {
+              "name": "Publish order-10 v1",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/publish",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "publish"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"topic\": \"orders\",\n  \"payload\": {\n    \"order_id\": \"order-10\",\n    \"status\": \"paid\",\n    \"version\": 1\n  }\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                      "if (pm.response.code === 201) pm.collectionVariables.set(\"messageId\", pm.response.json().message_id);"
+                    ]
+                  }
+                }
+              ],
+              "id": "90bdcf6e-5291-59f0-861e-391676c4ba8e"
+            },
+            {
+              "name": "Safe order consumer applies it",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=orders",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "orders"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f751fdd0-75fe-57c1-80df-976a3b36ac56"
+            },
+            {
+              "name": "Check: one pending outbox event",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"outbox_pending = 1  (written in the same tx as the order update)\", () => pm.expect(pm.response.json().outbox_pending).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "0aa9a472-26aa-567c-a8db-75722bde1b78"
+            },
+            {
+              "name": "Run the relay",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/relay/run",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "relay",
+                    "run"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"published = 1  (outbox row became a notifications message)\", () => pm.expect(pm.response.json().published).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "244910d3-c090-5e18-83ba-f6550c5cb396"
+            },
+            {
+              "name": "Run the relay again",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/relay/run",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "relay",
+                    "run"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"published = 0  (nothing left to publish)\", () => pm.expect(pm.response.json().published).to.eql(0));"
+                    ]
+                  }
+                }
+              ],
+              "id": "208f2494-ae94-56b4-8bb7-d1aff3c8dfd9"
+            },
+            {
+              "name": "Safe notification consumer sends it",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"applied = true\", () => pm.expect(pm.response.json().applied).to.eql(true));"
+                    ]
+                  }
+                }
+              ],
+              "id": "f2d8019e-d27e-5c52-b0cf-ba8537c8f3c9"
+            },
+            {
+              "name": "Topic is now empty",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/safe/consume?topic=notifications",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "safe",
+                    "consume"
+                  ],
+                  "query": [
+                    {
+                      "key": "topic",
+                      "value": "notifications"
+                    }
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"no messages available\", () => pm.expect(pm.response.json().message).to.eql(\"no messages available\"));"
+                    ]
+                  }
+                }
+              ],
+              "id": "740581e6-50e1-5957-a018-9af0cf8b1f82"
+            },
+            {
+              "name": "Check: exactly one notification",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/_stats",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "_stats"
+                  ]
+                }
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"notifications_sent = 1  (order update -> outbox -> relay -> one send)\", () => pm.expect(pm.response.json().notifications_sent).to.eql(1));",
+                      "pm.test(\"outbox_published = 1  (relayed once)\", () => pm.expect(pm.response.json().outbox_published).to.eql(1));"
+                    ]
+                  }
+                }
+              ],
+              "id": "7a3760b0-2b6c-5407-8b31-2c56de13b9f0"
+            }
+          ],
+          "description": "The consumer never calls the queue directly (the dual-write problem). It writes the outbox row with the state change; the relay publishes it with dedupe_key outbox:{id}, so even a relay retry lands on the same message.",
+          "id": "9a1df331-1504-54ff-9310-c6471ca003c1"
+        }
+      ],
+      "description": "Runnable experiments, the same ten as scripts/experiments.sh. Each scenario folder starts with POST /_reset and asserts the outcome with tests, so run one scenario (or the whole folder) in the Collection Runner and read the test results.",
+      "id": "9aec4b7b-746c-51dc-ae6f-ff557b564760"
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "messageId",
+      "value": "1"
+    }
+  ]
+}
