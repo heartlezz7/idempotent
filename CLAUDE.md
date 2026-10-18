@@ -89,6 +89,17 @@ middleware's transactional guarantee to hold — bypassing it (e.g. calling
 `h.pool.Exec` directly inside a handler mounted under the middleware) would
 silently break atomicity.
 
+**Shared handler helpers** live in `src/handler/helpers.go`, unexported, in
+package `handler`: `fail` (500 with `err.Error()`), `notFound` (404
+`not_found`), `invalidBody` (400 `invalid_body`), `audit` (append to
+`audit_log`), `etag`/`parseETag` (`"v<version>"` ↔ int), `chaos` (the
+`X-Chaos: fail-after-write` injection point) and `isUniqueViolation`
+(Postgres `23505`). Use them instead of writing those responses inline, and
+add any new helper used by more than one handler file there rather than in
+whichever resource file needs it first. Pass `audit` the `h.db(c)` handle,
+not the pool, so the audit row commits in the same transaction as the
+effect.
+
 **Per-resource mechanisms** (see `README.md`'s table for the full naive-vs-safe
 matrix): `PUT`/`PATCH` safety comes from assignment semantics (not
 accumulation) plus `content_hash`/`version` columns backing `ETag`/`If-Match`
