@@ -19,7 +19,7 @@ test:          ## run the full experiment suite against a running server (needs 
 	./scripts/experiments.sh
 
 unit-test:     ## run the go test suite directly against postgres (needs `make up`, no server required)
-	go test ./... -count=1
+	go test -p 1 ./... -count=1   # -p 1: packages share one database, run them serially
 
 psql:
 	docker compose exec db psql -U postgres -d postgres

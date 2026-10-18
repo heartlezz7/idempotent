@@ -234,7 +234,7 @@ would paper over.
 
 ```bash
 make up          # postgres + schema
-make unit-test   # go test ./... -- package-level, talks straight to postgres
+make unit-test   # go test -p 1 ./... -- package-level, talks straight to postgres
 make run         # in another shell
 make test        # scripts/experiments.sh -- end to end, over HTTP
 ```
@@ -244,6 +244,11 @@ database on `:5433`) and truncates the lab tables before each test, same
 as `/_reset`. Without a reachable database every test reports `SKIP` with
 a `run make up first` message rather than failing — `go test ./...` stays
 safe to run from a clean checkout.
+
+All packages share that one database and truncate the same tables, so
+run them serially: `make unit-test` passes `-p 1`. A plain parallel
+`go test ./...` lets one package's truncate or inserts land mid-test in
+another and fails intermittently.
 
 Coverage: `src/queue` (producer dedupe + conflict, the atomic claim under
 concurrent goroutines, lease expiry/stealing, ack/release, forced
