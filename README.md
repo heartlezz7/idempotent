@@ -9,21 +9,40 @@ Every mutation appends to `audit_log`. That table is the observable side effect:
 
 ## Run it
 
-Postgres runs in Docker; the API runs on the host and reads its config from `.env`.
+Two ways: everything in Docker, or Postgres in Docker and the API on the host.
+
+### Option A: all in Docker
 
 ```bash
-cp .env.example .env           # once; edit if your setup differs
-docker compose up -d db        # postgres on :5433, schema applied on first boot
+docker compose up -d --build   # postgres + the app on :8080, schema applied on first boot
+docker compose logs -f app     # follow the app's logs
+```
+
+The `app` service gets its `DATABASE_URL` from `docker-compose.yml` and reaches
+Postgres at `db:5432` on the compose network; it does not read `.env`.
+
+### Option B: API on the host
+
+```bash
+cp .env.example .env           # once; fill in <username> and <password>
+docker compose up -d db        # postgres on localhost:5432, schema applied on first boot
 make run                       # go mod tidy, then go run ./cmd/server on :8080
 ```
 
-Then, from another shell:
+Use the `POSTGRES_USER` / `POSTGRES_PASSWORD` from `docker-compose.yml`
+for `<username>` / `<password>`, percent-encoding any special characters.
+
+Postgres is published on host port `5432`, so stop any local Postgres
+already listening there first. Don't run the compose `app` service and
+`make run` at the same time; both listen on `:8080`.
+
+### Then
 
 ```bash
 make test                      # the full experiment suite (needs curl + jq)
 make reset                     # POST /_reset: truncate every table without restarting
 make psql                      # psql shell on the database
-docker compose down -v         # stop postgres and wipe its volume
+docker compose down -v         # stop everything and wipe the db volume
 ```
 
 Once it's up:
@@ -47,7 +66,7 @@ the environment take precedence, and a missing `.env` is fine.
 | `ADDR` | `:8080` | Listen address |
 
 The default `DATABASE_URL` does not match `docker-compose.yml`, so set it in
-`.env` (`.env.example` has the right value). Special characters in the
+`.env` when running on the host (see Option B). Special characters in the
 password must be percent-encoded in the URL — `@` becomes `%40`.
 
 `POSTGRES_PASSWORD` only applies when the volume is first created. After
