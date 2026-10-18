@@ -9,30 +9,57 @@ Every mutation appends to `audit_log`. That table is the observable side effect:
 
 ## Run it
 
+Postgres runs in Docker; the API runs on the host and reads its config from `.env`.
+
 ```bash
-docker compose up -d --build   # postgres on :5433 (schema applied on first boot) + the app on :8080
+cp .env.example .env           # once; edit if your setup differs
+docker compose up -d db        # postgres on :5433, schema applied on first boot
+make run                       # go mod tidy, then go run ./cmd/server on :8080
+```
+
+Then, from another shell:
+
+```bash
 make test                      # the full experiment suite (needs curl + jq)
 make reset                     # POST /_reset: truncate every table without restarting
-docker compose down -v         # stop everything and wipe the db volume
+make psql                      # psql shell on the database
+docker compose down -v         # stop postgres and wipe its volume
 ```
 
-The `app` service reaches Postgres at `db:5432` on the compose network. See
-`docker-compose.yml` for the env and `Dockerfile` for the image build.
+Once it's up:
 
-To run the app on the host instead, start only the database and point
-`DATABASE_URL` at the published port:
+| | URL |
+|---|---|
+| API | <http://localhost:8080> |
+| Swagger UI | <http://localhost:8080/swagger/index.html> |
+| Raw spec (JSON) | <http://localhost:8080/swagger/doc.json> |
+| Scoreboard | <http://localhost:8080/_stats> |
 
-```bash
-docker compose up -d db
-DATABASE_URL='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disable' go run .
-```
+### Configuration
 
-`make psql` opens a shell on the database.
+`cmd/server` loads `.env` from the working directory with
+[`joho/godotenv`](https://github.com/joho/godotenv). Variables already set in
+the environment take precedence, and a missing `.env` is fine.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | `postgres://lab:lab@localhost:5432/lab?sslmode=disable` | Postgres connection string |
+| `ADDR` | `:8080` | Listen address |
+
+The default `DATABASE_URL` does not match `docker-compose.yml`, so set it in
+`.env` (`.env.example` has the right value). Special characters in the
+password must be percent-encoded in the URL — `@` becomes `%40`.
+
+`POSTGRES_PASSWORD` only applies when the volume is first created. After
+changing it in `docker-compose.yml`, run `docker compose down -v` so the
+database is re-initialised with the new password.
 
 ## API spec (Swagger)
 
-With the app running, open <http://localhost:8080/swagger/index.html>. The
-raw spec is committed at `docs/swagger/swagger.yaml` (and `.json`).
+With the app running, open the Swagger UI at
+<http://localhost:8080/swagger/index.html> (raw spec:
+<http://localhost:8080/swagger/doc.json>). The same spec is committed at
+`docs/swagger/swagger.yaml` (and `.json`).
 
 The spec is generated from `swag` annotations on the handlers in
 `src/handler/`. After changing a route, a request/response type or an

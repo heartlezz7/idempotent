@@ -14,16 +14,16 @@ endpoint actually behaved idempotently under retries.
 
 ```bash
 make up      # docker compose up -d (postgres) + wait for healthy; applies migrations via docker-entrypoint-initdb.d
-make run     # go mod tidy, then `go run .` on :8080
+make run     # go mod tidy, then `go run ./cmd/server` on :8080
 make test    # ./scripts/experiments.sh -- full experiment suite (needs curl + jq + running server)
 make reset   # curl -sX POST localhost:8080/_reset
 make down    # docker compose down -v (wipes the db volume)
 make psql    # docker compose exec db psql -U postgres -d postgres
 ```
 
-Note: `Makefile`'s `run` target invokes `go run ./cmd/server`, but `main.go`
-lives at the repo root (package `main`) and `cmd/` only contains the
-migration SQL — if that target errors, run `go run .` directly.
+The entry point is `cmd/server/main.go`; `cmd/migration/` only holds the
+schema SQL. `make swagger` regenerates `docs/swagger/` from the handler
+annotations (its general API info lives on `main()` in `cmd/server/main.go`).
 
 `POST /_reset` truncates all tables without restarting the stack; prefer it
 over `make down && make up` between manual experiments.
@@ -38,7 +38,7 @@ via `scripts/experiments.sh` against `GET /_stats`, plus `go vet ./...` /
 
 ## Architecture
 
-**Two route trees, one handler set.** `main.go` mounts `/naive/*` and
+**Two route trees, one handler set.** `cmd/server/main.go` mounts `/naive/*` and
 `/safe/*` groups pointing at the *same* handler functions where the
 resource allows it (e.g. `POST /safe/users` and `POST /naive/users` both
 call `h.CreateUser` — only the middleware in front differs). Where the

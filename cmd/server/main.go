@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log"
 	"os"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/heartlezz7/idempotent/src/handler"
 	"github.com/heartlezz7/idempotent/src/route/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -24,6 +27,13 @@ import (
 // @BasePath		/
 // @schemes		http
 func main() {
+	// Load .env from the working directory if there is one. Variables
+	// already set in the environment (e.g. by docker compose) win, and a
+	// missing file is fine -- the defaults below still apply.
+	if err := godotenv.Load(); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		log.Fatalf("load .env: %v", err)
+	}
+
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
 		dsn = "postgres://lab:lab@localhost:5432/lab?sslmode=disable"

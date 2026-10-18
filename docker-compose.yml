@@ -3,10 +3,10 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: p@ssW0rd
       POSTGRES_DB: postgres
     ports:
-      - "5433:5432"
+      - "5432:5432"
     # Files in this directory run automatically on first boot.
     volumes:
       - ./cmd/migration/database/sql:/docker-entrypoint-initdb.d:ro
@@ -19,7 +19,7 @@ services:
   app:
     build: .
     environment:
-      DATABASE_URL: postgres://postgres:postgres@db:5432/postgres?sslmode=disable
+      DATABASE_URL: postgres://postgres:p@ssW0rd@db:5432/postgres?sslmode=disable
       ADDR: :8080
     ports:
       - "8080:8080"

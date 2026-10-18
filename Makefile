@@ -13,7 +13,7 @@ tidy:
 	go mod tidy
 
 run: tidy      ## start the API on :8080
-	go run ./cmd/server
+	go run ./cmd/server/**.go
 
 test:          ## run the full experiment suite against a running server
 	./scripts/experiments.sh
@@ -27,5 +27,5 @@ psql:
 SWAG_VERSION ?= v1.16.6
 
 swagger:       ## regenerate docs/swagger from the handler annotations
-	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) fmt -g main.go -d ./,./src/handler
-	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g main.go -d ./,./src/handler,./src/model -o docs/swagger --parseInternal
+	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) fmt -g main.go -d ./cmd/server,./src/handler
+	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g main.go -d ./cmd/server,./src/handler,./src/model -o docs/swagger --parseInternal
