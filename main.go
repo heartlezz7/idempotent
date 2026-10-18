@@ -7,11 +7,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	_ "github.com/heartlezz7/idempotent/docs/swagger"
 	"github.com/heartlezz7/idempotent/src/handler"
 	"github.com/heartlezz7/idempotent/src/route/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// @title			Idempotency Lab API
+// @version		1.0
+// @description	Two parallel route trees over the same two resources.
+// @description	/naive has no protection; /safe protects each method with the mechanism that suits it.
+// @description	Every mutation appends to audit_log -- read GET /_stats to see whether a retry duplicated anything.
+// @host			localhost:8080
+// @BasePath		/
+// @schemes		http
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -38,6 +49,9 @@ func main() {
 	r.POST("/_reset", h.Reset)
 	r.POST("/_sweep", h.Sweep)
 	r.POST("/_expire_keys", h.ExpireKeys)
+
+	// ---- API docs: /swagger/index.html ---------------------------------
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	// ===================================================================
 	//  /naive  -- no protection anywhere. This is the control group.

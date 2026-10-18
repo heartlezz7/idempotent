@@ -1,0 +1,1027 @@
+basePath: /
+definitions:
+  model.CreateInformationReq:
+    properties:
+      age:
+        type: integer
+      phone:
+        type: string
+    required:
+    - age
+    - phone
+    type: object
+  model.CreateUserReq:
+    properties:
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  model.ErrorResponse:
+    properties:
+      error:
+        example: precondition_failed
+        type: string
+      hint:
+        example: GET the resource first and send its ETag as If-Match
+        type: string
+    type: object
+  model.ExpireKeysResponse:
+    properties:
+      expired:
+        type: integer
+    type: object
+  model.Information:
+    properties:
+      age:
+        type: integer
+      id:
+        type: string
+      phone:
+        type: string
+      version:
+        type: integer
+    type: object
+  model.PatchInformationNaiveReq:
+    properties:
+      age_increment:
+        type: integer
+    type: object
+  model.PatchInformationReq:
+    properties:
+      age:
+        type: integer
+      phone:
+        type: string
+    type: object
+  model.PatchUserNaiveReq:
+    properties:
+      append_name:
+        type: string
+    type: object
+  model.PatchUserReq:
+    properties:
+      name:
+        type: string
+    type: object
+  model.PutUserReq:
+    properties:
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  model.ResetResponse:
+    properties:
+      reset:
+        example: true
+        type: boolean
+    type: object
+  model.StatsResponse:
+    properties:
+      audit_entries:
+        type: integer
+      idempotency_keys:
+        type: integer
+      idempotency_keys_completed:
+        type: integer
+      idempotency_keys_in_progress:
+        type: integer
+      information_live:
+        type: integer
+      users_deleted:
+        type: integer
+      users_live:
+        type: integer
+    type: object
+  model.SweepResponse:
+    properties:
+      swept:
+        type: integer
+    type: object
+  model.User:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      version:
+        description: drives ETag / If-Match
+        type: integer
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: |-
+    Two parallel route trees over the same two resources.
+    /naive has no protection; /safe protects each method with the mechanism that suits it.
+    Every mutation appends to audit_log -- read GET /_stats to see whether a retry duplicated anything.
+  title: Idempotency Lab API
+  version: "1.0"
+paths:
+  /_expire_keys:
+    post:
+      description: 'Lab-only: lets you test the TTL boundary without waiting 24h.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ExpireKeysResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Force every key to look expired
+      tags:
+      - lab
+  /_reset:
+    post:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.ResetResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Truncate every table
+      tags:
+      - lab
+  /_stats:
+    get:
+      description: Row counts. An idempotent endpoint leaves them flat after the first
+        call.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.StatsResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Scoreboard
+      tags:
+      - lab
+  /_sweep:
+    post:
+      description: Batched (10000 rows). Production would run this on a schedule.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.SweepResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Delete expired idempotency keys
+      tags:
+      - lab
+  /naive/information:
+    get:
+      description: Pure read; identical on both trees.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/model.Information'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: List information
+      tags:
+      - information
+    post:
+      consumes:
+      - application/json
+      description: The unique phone index still blocks the duplicate, but the retry
+        gets a 500 that leaks the constraint name.
+      parameters:
+      - description: New record
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.CreateInformationReq'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/model.Information'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Create information (naive)
+      tags:
+      - information
+  /naive/information/{id}:
+    delete:
+      description: Hard delete; audits on every call.
+      parameters:
+      - description: Information ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Delete information (naive)
+      tags:
+      - information
+    get:
+      parameters:
+      - description: Information ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: ETag from a previous GET
+        in: header
+        name: If-None-Match
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Information'
+        "304":
+          description: Not modified
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Get information (conditional GET)
+      tags:
+      - information
+    patch:
+      consumes:
+      - application/json
+      description: age = age + age_increment. Three retries age the person three times.
+      parameters:
+      - description: Information ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Accumulating patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.PatchInformationNaiveReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Information'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Patch information (naive)
+      tags:
+      - information
+  /naive/users:
+    get:
+      description: Pure read; identical on both trees.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/model.User'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: 'Same handler on both trees. /naive duplicates on every retry.
+        /safe sits behind the Idempotency-Key middleware: one row per key, the stored
+        response is replayed with Idempotent-Replayed: true.'
+      parameters:
+      - description: New user
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.CreateUserReq'
+      - description: 'Required on /safe: one UUID per logical operation (max 255 chars)'
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: Tenant scope for the key on /safe (default \
+        in: header
+        name: X-Api-Key
+        type: string
+      - description: 'fail-after-write: return 500 after the insert'
+        enum:
+        - fail-after-write
+        in: header
+        name: X-Chaos
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created (or replayed on /safe)
+          headers:
+            Location:
+              description: URI of the new user
+              type: string
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: invalid_body, or idempotency_key_required on /safe
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "409":
+          description: '/safe: identical request still in flight (Retry-After: 1)'
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "422":
+          description: '/safe: key reused with a different payload'
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Create a user
+      tags:
+      - users
+  /naive/users/{id}:
+    delete:
+      description: Hard delete; audits on every call, even repeats.
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Delete a user (naive)
+      tags:
+      - users
+    get:
+      description: Returns an ETag; send it back as If-None-Match to get 304.
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: ETag from a previous GET, e.g. \
+        in: header
+        name: If-None-Match
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.User'
+        "304":
+          description: Not modified
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Get a user (conditional GET)
+      tags:
+      - users
+    patch:
+      consumes:
+      - application/json
+      description: 'Accumulating patch: name = name || append_name. Every retry changes
+        state.'
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Accumulating patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.PatchUserNaiveReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Patch a user (naive)
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Upsert that still bumps version and audits on every identical call.
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Full replacement
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.PutUserReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Replace a user (naive)
+      tags:
+      - users
+  /safe/information:
+    get:
+      description: Pure read; identical on both trees.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/model.Information'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: List information
+      tags:
+      - information
+    post:
+      consumes:
+      - application/json
+      description: 'No Idempotency-Key needed: the unique phone index is the dedup.
+        A repeat returns 200 with the existing record.'
+      parameters:
+      - description: New record
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.CreateInformationReq'
+      - description: 'fail-after-write: return 500 after the insert'
+        enum:
+        - fail-after-write
+        in: header
+        name: X-Chaos
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 'Already existed (Idempotent-Replayed: true)'
+          headers:
+            Location:
+              description: URI of the record
+              type: string
+          schema:
+            $ref: '#/definitions/model.Information'
+        "201":
+          description: Created
+          headers:
+            Location:
+              description: URI of the record
+              type: string
+          schema:
+            $ref: '#/definitions/model.Information'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Create information (safe)
+      tags:
+      - information
+  /safe/information/{id}:
+    delete:
+      description: 'Guarded soft delete: 204, then 410.'
+      parameters:
+      - description: Information ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted just now
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "410":
+          description: Gone
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Delete information (safe)
+      tags:
+      - information
+    get:
+      parameters:
+      - description: Information ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: ETag from a previous GET
+        in: header
+        name: If-None-Match
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Information'
+        "304":
+          description: Not modified
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Get information (conditional GET)
+      tags:
+      - information
+    patch:
+      consumes:
+      - application/json
+      description: Merge patch with absolute values and a mandatory If-Match.
+      parameters:
+      - description: Information ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Merge patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.PatchInformationReq'
+      - description: ETag from GET
+        in: header
+        name: If-Match
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          headers:
+            ETag:
+              description: Current version
+              type: string
+          schema:
+            $ref: '#/definitions/model.Information'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "409":
+          description: phone_already_taken
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "412":
+          description: Precondition Failed
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "428":
+          description: Precondition Required
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Patch information (safe)
+      tags:
+      - information
+    put:
+      consumes:
+      - application/json
+      description: 'Pure assignment at a client-known URI: 201 on create, 200 on replace.'
+      parameters:
+      - description: Information ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Full replacement
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.CreateInformationReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          headers:
+            ETag:
+              description: Current version
+              type: string
+          schema:
+            $ref: '#/definitions/model.Information'
+        "201":
+          description: Created
+          headers:
+            ETag:
+              description: Current version
+              type: string
+          schema:
+            $ref: '#/definitions/model.Information'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "409":
+          description: phone_already_taken
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Replace information
+      tags:
+      - information
+  /safe/users:
+    get:
+      description: Pure read; identical on both trees.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/model.User'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      description: 'Same handler on both trees. /naive duplicates on every retry.
+        /safe sits behind the Idempotency-Key middleware: one row per key, the stored
+        response is replayed with Idempotent-Replayed: true.'
+      parameters:
+      - description: New user
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.CreateUserReq'
+      - description: 'Required on /safe: one UUID per logical operation (max 255 chars)'
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: Tenant scope for the key on /safe (default \
+        in: header
+        name: X-Api-Key
+        type: string
+      - description: 'fail-after-write: return 500 after the insert'
+        enum:
+        - fail-after-write
+        in: header
+        name: X-Chaos
+        type: string
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created (or replayed on /safe)
+          headers:
+            Location:
+              description: URI of the new user
+              type: string
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: invalid_body, or idempotency_key_required on /safe
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "409":
+          description: '/safe: identical request still in flight (Retry-After: 1)'
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "422":
+          description: '/safe: key reused with a different payload'
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Create a user
+      tags:
+      - users
+  /safe/users/{id}:
+    delete:
+      description: 'Guarded soft delete: 204 the first time, 410 after (tombstone),
+        404 if it never existed.'
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: Deleted just now
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "410":
+          description: Gone
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Delete a user (safe)
+      tags:
+      - users
+    get:
+      description: Returns an ETag; send it back as If-None-Match to get 304.
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: ETag from a previous GET, e.g. \
+        in: header
+        name: If-None-Match
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.User'
+        "304":
+          description: Not modified
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Get a user (conditional GET)
+      tags:
+      - users
+    patch:
+      consumes:
+      - application/json
+      - application/merge-patch+json
+      description: JSON Merge Patch with a mandatory If-Match. An identical re-patch
+        keeps the version, so a retry still matches.
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Merge patch
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.PatchUserReq'
+      - description: ETag from GET, e.g. \
+        in: header
+        name: If-Match
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          headers:
+            ETag:
+              description: Current version
+              type: string
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "412":
+          description: Precondition Failed
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "415":
+          description: Unsupported Media Type
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "428":
+          description: Precondition Required
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Patch a user (safe)
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: 'Assignment guarded by a content hash: 201 on create, 200 on replace,
+        version frozen on identical writes.'
+      parameters:
+      - description: User ID (uuid)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Full replacement
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/model.PutUserReq'
+      - description: Only replace if the current ETag matches
+        in: header
+        name: If-Match
+        type: string
+      - description: '* = only create, never replace'
+        in: header
+        name: If-None-Match
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Replaced (or unchanged)
+          headers:
+            ETag:
+              description: Current version
+              type: string
+          schema:
+            $ref: '#/definitions/model.User'
+        "201":
+          description: Created
+          headers:
+            ETag:
+              description: Current version
+              type: string
+          schema:
+            $ref: '#/definitions/model.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "412":
+          description: Precondition Failed
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.ErrorResponse'
+      summary: Replace a user (safe)
+      tags:
+      - users
+schemes:
+- http
+swagger: "2.0"

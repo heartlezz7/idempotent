@@ -30,6 +30,14 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation
 }
 
+// @Summary		List information
+// @Description	Pure read; identical on both trees.
+// @Tags			information
+// @Produce		json
+// @Success		200	{array}		model.Information
+// @Failure		500	{object}	model.ErrorResponse
+// @Router			/naive/information [get]
+// @Router			/safe/information [get]
 func (h *Handler) ListInformation(c *gin.Context) {
 	rows, err := h.db(c).Query(c, `
 		SELECT id, phone, age, version FROM information
@@ -52,6 +60,17 @@ func (h *Handler) ListInformation(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// @Summary	Get information (conditional GET)
+// @Tags		information
+// @Produce	json
+// @Param		id				path		string	true	"Information ID (uuid)"
+// @Param		If-None-Match	header		string	false	"ETag from a previous GET"
+// @Success	200				{object}	model.Information
+// @Success	304				"Not modified"
+// @Failure	404				{object}	model.ErrorResponse
+// @Failure	500				{object}	model.ErrorResponse
+// @Router		/naive/information/{id} [get]
+// @Router		/safe/information/{id} [get]
 func (h *Handler) GetInformation(c *gin.Context) {
 	var i model.Information
 	err := h.db(c).QueryRow(c, `
@@ -85,6 +104,17 @@ func (h *Handler) GetInformation(c *gin.Context) {
 //
 // This is the common half-fix. The constraint protects the table; the
 // error handling is what makes the endpoint usable.
+//
+//	@Summary		Create information (naive)
+//	@Description	The unique phone index still blocks the duplicate, but the retry gets a 500 that leaks the constraint name.
+//	@Tags			information
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		model.CreateInformationReq	true	"New record"
+//	@Success		201		{object}	model.Information
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/naive/information [post]
 func (h *Handler) CreateInformationNaive(c *gin.Context) {
 	var in model.CreateInformationReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -110,6 +140,20 @@ func (h *Handler) CreateInformationNaive(c *gin.Context) {
 //
 // No Idempotency-Key header, no receipt table, no lease. The unique
 // index IS the dedup. Reach for this before building key infrastructure.
+//
+//	@Summary		Create information (safe)
+//	@Description	No Idempotency-Key needed: the unique phone index is the dedup. A repeat returns 200 with the existing record.
+//	@Tags			information
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		model.CreateInformationReq	true	"New record"
+//	@Param			X-Chaos	header		string						false	"fail-after-write: return 500 after the insert"	Enums(fail-after-write)
+//	@Success		200		{object}	model.Information			"Already existed (Idempotent-Replayed: true)"
+//	@Success		201		{object}	model.Information			"Created"
+//	@Header			200,201	{string}	Location					"URI of the record"
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/safe/information [post]
 func (h *Handler) CreateInformationSafe(c *gin.Context) {
 	var in model.CreateInformationReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -155,6 +199,21 @@ func (h *Handler) CreateInformationSafe(c *gin.Context) {
 
 // PutInformationSafe: full replacement at a client-known URI. Both
 // fields are always supplied, so this is a pure assignment.
+//
+//	@Summary		Replace information
+//	@Description	Pure assignment at a client-known URI: 201 on create, 200 on replace.
+//	@Tags			information
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string						true	"Information ID (uuid)"
+//	@Param			body	body		model.CreateInformationReq	true	"Full replacement"
+//	@Success		200		{object}	model.Information
+//	@Success		201		{object}	model.Information
+//	@Header			200,201	{string}	ETag	"Current version"
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		409		{object}	model.ErrorResponse	"phone_already_taken"
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/safe/information/{id} [put]
 func (h *Handler) PutInformationSafe(c *gin.Context) {
 	var in model.CreateInformationReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -212,6 +271,19 @@ func (h *Handler) PutInformationSafe(c *gin.Context) {
 
 // PatchInformationNaive: `age = age + n`. The textbook non-idempotent
 // patch. Three retries age the person by three years.
+//
+//	@Summary		Patch information (naive)
+//	@Description	age = age + age_increment. Three retries age the person three times.
+//	@Tags			information
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string							true	"Information ID (uuid)"
+//	@Param			body	body		model.PatchInformationNaiveReq	true	"Accumulating patch"
+//	@Success		200		{object}	model.Information
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		404		{object}	model.ErrorResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/naive/information/{id} [patch]
 func (h *Handler) PatchInformationNaive(c *gin.Context) {
 	var in model.PatchInformationNaiveReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -243,6 +315,23 @@ func (h *Handler) PatchInformationNaive(c *gin.Context) {
 
 // PatchInformationSafe: merge patch with absolute values, guarded by
 // If-Match. Sending {"age": 31} ten times leaves age at 31.
+//
+//	@Summary		Patch information (safe)
+//	@Description	Merge patch with absolute values and a mandatory If-Match.
+//	@Tags			information
+//	@Accept			json
+//	@Produce		json
+//	@Param			id			path		string						true	"Information ID (uuid)"
+//	@Param			body		body		model.PatchInformationReq	true	"Merge patch"
+//	@Param			If-Match	header		string						true	"ETag from GET"
+//	@Success		200			{object}	model.Information
+//	@Header			200			{string}	ETag	"Current version"
+//	@Failure		400			{object}	model.ErrorResponse
+//	@Failure		409			{object}	model.ErrorResponse	"phone_already_taken"
+//	@Failure		412			{object}	model.ErrorResponse
+//	@Failure		428			{object}	model.ErrorResponse
+//	@Failure		500			{object}	model.ErrorResponse
+//	@Router			/safe/information/{id} [patch]
 func (h *Handler) PatchInformationSafe(c *gin.Context) {
 	var in model.PatchInformationReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -312,6 +401,15 @@ func (h *Handler) PatchInformationSafe(c *gin.Context) {
 	c.JSON(http.StatusOK, i)
 }
 
+// @Summary		Delete information (naive)
+// @Description	Hard delete; audits on every call.
+// @Tags			information
+// @Produce		json
+// @Param			id	path	string	true	"Information ID (uuid)"
+// @Success		204	"Deleted"
+// @Failure		404	{object}	model.ErrorResponse
+// @Failure		500	{object}	model.ErrorResponse
+// @Router			/naive/information/{id} [delete]
 func (h *Handler) DeleteInformationNaive(c *gin.Context) {
 	db := h.db(c)
 	tag, err := db.Exec(c, `DELETE FROM information WHERE id = $1::uuid`, c.Param("id"))
@@ -328,6 +426,16 @@ func (h *Handler) DeleteInformationNaive(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// @Summary		Delete information (safe)
+// @Description	Guarded soft delete: 204, then 410.
+// @Tags			information
+// @Produce		json
+// @Param			id	path	string	true	"Information ID (uuid)"
+// @Success		204	"Deleted just now"
+// @Failure		404	{object}	model.ErrorResponse
+// @Failure		410	{object}	model.ErrorResponse
+// @Failure		500	{object}	model.ErrorResponse
+// @Router			/safe/information/{id} [delete]
 func (h *Handler) DeleteInformationSafe(c *gin.Context) {
 	db := h.db(c)
 	id := c.Param("id")

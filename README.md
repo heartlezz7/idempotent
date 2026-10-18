@@ -29,6 +29,24 @@ DATABASE_URL='postgres://postgres:postgres@localhost:5433/postgres?sslmode=disab
 
 `make psql` opens a shell on the database.
 
+## API spec (Swagger)
+
+With the app running, open <http://localhost:8080/swagger/index.html>. The
+raw spec is committed at `docs/swagger/swagger.yaml` (and `.json`).
+
+The spec is generated from `swag` annotations on the handlers in
+`src/handler/`. After changing a route, a request/response type or an
+annotation, regenerate it:
+
+```bash
+make swagger   # swag fmt + swag init -> docs/swagger/
+```
+
+The target runs a pinned `swag` (`SWAG_VERSION`, default `v1.16.6`) via
+`go run`, so nothing needs installing. Keep it in step with the
+`github.com/swaggo/swag` version in `go.mod`, or the generated `docs.go`
+may not compile.
+
 ## Docs
 
 Open these in a browser; they are self-contained HTML.

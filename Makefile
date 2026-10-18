@@ -1,4 +1,4 @@
-.PHONY: up down run tidy test psql reset
+.PHONY: up down run tidy test psql reset swagger
 
 up:            ## start postgres and apply migrations
 	docker compose up -d
@@ -23,3 +23,9 @@ reset:
 
 psql:
 	docker compose exec db psql -U postgres -d postgres
+
+SWAG_VERSION ?= v1.16.6
+
+swagger:       ## regenerate docs/swagger from the handler annotations
+	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) fmt -g main.go -d ./,./src/handler
+	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g main.go -d ./,./src/handler,./src/model -o docs/swagger --parseInternal

@@ -60,6 +60,14 @@ func chaos(c *gin.Context) bool {
 // GET  -- safe and idempotent by construction. Identical on both trees.
 // =====================================================================
 
+// @Summary		List users
+// @Description	Pure read; identical on both trees.
+// @Tags			users
+// @Produce		json
+// @Success		200	{array}		model.User
+// @Failure		500	{object}	model.ErrorResponse
+// @Router			/naive/users [get]
+// @Router			/safe/users [get]
 func (h *Handler) ListUsers(c *gin.Context) {
 	rows, err := h.db(c).Query(c, `
 		SELECT id, name, version FROM users
@@ -85,6 +93,19 @@ func (h *Handler) ListUsers(c *gin.Context) {
 // GetUser demonstrates the conditional GET. The handler performs no
 // writes at all -- no view counter, no lazy provisioning -- because
 // prefetchers, crawlers and link unfurlers will call it uninvited.
+//
+//	@Summary		Get a user (conditional GET)
+//	@Description	Returns an ETag; send it back as If-None-Match to get 304.
+//	@Tags			users
+//	@Produce		json
+//	@Param			id				path		string	true	"User ID (uuid)"
+//	@Param			If-None-Match	header		string	false	"ETag from a previous GET, e.g. \"v3\""
+//	@Success		200				{object}	model.User
+//	@Success		304				"Not modified"
+//	@Failure		404				{object}	model.ErrorResponse
+//	@Failure		500				{object}	model.ErrorResponse
+//	@Router			/naive/users/{id} [get]
+//	@Router			/safe/users/{id} [get]
 func (h *Handler) GetUser(c *gin.Context) {
 	var u model.User
 	err := h.db(c).QueryRow(c, `
@@ -117,6 +138,23 @@ func (h *Handler) GetUser(c *gin.Context) {
 // does not. Nothing in the business logic below differs.
 // =====================================================================
 
+// @Summary		Create a user
+// @Description	Same handler on both trees. /naive duplicates on every retry. /safe sits behind the Idempotency-Key middleware: one row per key, the stored response is replayed with Idempotent-Replayed: true.
+// @Tags			users
+// @Accept			json
+// @Produce		json
+// @Param			body			body		model.CreateUserReq	true	"New user"
+// @Param			Idempotency-Key	header		string				false	"Required on /safe: one UUID per logical operation (max 255 chars)"
+// @Param			X-Api-Key		header		string				false	"Tenant scope for the key on /safe (default \"demo\")"
+// @Param			X-Chaos			header		string				false	"fail-after-write: return 500 after the insert"	Enums(fail-after-write)
+// @Success		201				{object}	model.User			"Created (or replayed on /safe)"
+// @Header			201				{string}	Location			"URI of the new user"
+// @Failure		400				{object}	model.ErrorResponse	"invalid_body, or idempotency_key_required on /safe"
+// @Failure		409				{object}	model.ErrorResponse	"/safe: identical request still in flight (Retry-After: 1)"
+// @Failure		422				{object}	model.ErrorResponse	"/safe: key reused with a different payload"
+// @Failure		500				{object}	model.ErrorResponse
+// @Router			/naive/users [post]
+// @Router			/safe/users [post]
 func (h *Handler) CreateUser(c *gin.Context) {
 	var in model.CreateUserReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -153,6 +191,18 @@ func (h *Handler) CreateUser(c *gin.Context) {
 // PutUserNaive: an upsert that still manages to be non-idempotent.
 // The version counter climbs on every call and the audit log grows,
 // so three identical writes leave three different observable states.
+//
+//	@Summary		Replace a user (naive)
+//	@Description	Upsert that still bumps version and audits on every identical call.
+//	@Tags			users
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string				true	"User ID (uuid)"
+//	@Param			body	body		model.PutUserReq	true	"Full replacement"
+//	@Success		200		{object}	model.User
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/naive/users/{id} [put]
 func (h *Handler) PutUserNaive(c *gin.Context) {
 	var in model.PutUserReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -184,10 +234,30 @@ func (h *Handler) PutUserNaive(c *gin.Context) {
 //
 //   - version advances only when the content genuinely changed, so a
 //     retry does not invalidate every other client's If-Match
+//
 //   - the audit row is appended only on a real change
+//
 //   - 201 on create, 200 on replace: different status codes, identical
 //     server state, which is exactly what idempotency permits
+//
 //   - If-Match / If-None-Match are honoured for concurrency control
+//
+//     @Summary		Replace a user (safe)
+//     @Description	Assignment guarded by a content hash: 201 on create, 200 on replace, version frozen on identical writes.
+//     @Tags			users
+//     @Accept			json
+//     @Produce		json
+//     @Param			id				path		string				true	"User ID (uuid)"
+//     @Param			body			body		model.PutUserReq	true	"Full replacement"
+//     @Param			If-Match		header		string				false	"Only replace if the current ETag matches"
+//     @Param			If-None-Match	header		string				false	"* = only create, never replace"
+//     @Success		200				{object}	model.User			"Replaced (or unchanged)"
+//     @Success		201				{object}	model.User			"Created"
+//     @Header			200,201			{string}	ETag				"Current version"
+//     @Failure		400				{object}	model.ErrorResponse
+//     @Failure		412				{object}	model.ErrorResponse
+//     @Failure		500				{object}	model.ErrorResponse
+//     @Router			/safe/users/{id} [put]
 func (h *Handler) PutUserSafe(c *gin.Context) {
 	var in model.PutUserReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -271,6 +341,19 @@ func (h *Handler) PutUserSafe(c *gin.Context) {
 
 // PatchUserNaive applies an accumulating operation. Nothing here can be
 // retried safely, because the result depends on the previous value.
+//
+//	@Summary		Patch a user (naive)
+//	@Description	Accumulating patch: name = name || append_name. Every retry changes state.
+//	@Tags			users
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string					true	"User ID (uuid)"
+//	@Param			body	body		model.PatchUserNaiveReq	true	"Accumulating patch"
+//	@Success		200		{object}	model.User
+//	@Failure		400		{object}	model.ErrorResponse
+//	@Failure		404		{object}	model.ErrorResponse
+//	@Failure		500		{object}	model.ErrorResponse
+//	@Router			/naive/users/{id} [patch]
 func (h *Handler) PatchUserNaive(c *gin.Context) {
 	var in model.PatchUserNaiveReq
 	if err := c.ShouldBindJSON(&in); err != nil {
@@ -307,6 +390,24 @@ func (h *Handler) PatchUserNaive(c *gin.Context) {
 // version. That means the retry's now-stale If-Match still matches, and
 // the call succeeds as a true no-op instead of returning a confusing
 // 412 for an operation that actually worked.
+//
+//	@Summary		Patch a user (safe)
+//	@Description	JSON Merge Patch with a mandatory If-Match. An identical re-patch keeps the version, so a retry still matches.
+//	@Tags			users
+//	@Accept			json
+//	@Accept			application/merge-patch+json
+//	@Produce		json
+//	@Param			id			path		string				true	"User ID (uuid)"
+//	@Param			body		body		model.PatchUserReq	true	"Merge patch"
+//	@Param			If-Match	header		string				true	"ETag from GET, e.g. \"v3\""
+//	@Success		200			{object}	model.User
+//	@Header			200			{string}	ETag	"Current version"
+//	@Failure		400			{object}	model.ErrorResponse
+//	@Failure		412			{object}	model.ErrorResponse
+//	@Failure		415			{object}	model.ErrorResponse
+//	@Failure		428			{object}	model.ErrorResponse
+//	@Failure		500			{object}	model.ErrorResponse
+//	@Router			/safe/users/{id} [patch]
 func (h *Handler) PatchUserSafe(c *gin.Context) {
 	if ct := c.ContentType(); ct != "" &&
 		ct != "application/merge-patch+json" && ct != "application/json" {
@@ -393,6 +494,16 @@ func (h *Handler) PatchUserSafe(c *gin.Context) {
 
 // DeleteUserNaive hard-deletes and fires its side effect unconditionally,
 // so calling it three times writes three audit rows for one deletion.
+//
+//	@Summary		Delete a user (naive)
+//	@Description	Hard delete; audits on every call, even repeats.
+//	@Tags			users
+//	@Produce		json
+//	@Param			id	path	string	true	"User ID (uuid)"
+//	@Success		204	"Deleted"
+//	@Failure		404	{object}	model.ErrorResponse
+//	@Failure		500	{object}	model.ErrorResponse
+//	@Router			/naive/users/{id} [delete]
 func (h *Handler) DeleteUserNaive(c *gin.Context) {
 	db := h.db(c)
 	tag, err := db.Exec(c, `DELETE FROM users WHERE id = $1::uuid`, c.Param("id"))
@@ -420,6 +531,17 @@ func (h *Handler) DeleteUserNaive(c *gin.Context) {
 //
 // The 410/404 split is what lets a client write correct retry logic:
 // "404 might be my typo, 410 means my earlier call worked."
+//
+//	@Summary		Delete a user (safe)
+//	@Description	Guarded soft delete: 204 the first time, 410 after (tombstone), 404 if it never existed.
+//	@Tags			users
+//	@Produce		json
+//	@Param			id	path	string	true	"User ID (uuid)"
+//	@Success		204	"Deleted just now"
+//	@Failure		404	{object}	model.ErrorResponse
+//	@Failure		410	{object}	model.ErrorResponse
+//	@Failure		500	{object}	model.ErrorResponse
+//	@Router			/safe/users/{id} [delete]
 func (h *Handler) DeleteUserSafe(c *gin.Context) {
 	db := h.db(c)
 	id := c.Param("id")
