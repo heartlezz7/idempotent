@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -52,7 +51,7 @@ func (h *Handler) Publish(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"message_id": id, "deduped": deduped})
@@ -81,7 +80,7 @@ func (h *Handler) NaiveConsume(c *gin.Context) {
 	ctx := c.Request.Context()
 	msg, err := queue.Claim(ctx, h.pool, topic, "naive-"+uuid.NewString(), leaseSeconds(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	if msg == nil {
@@ -91,7 +90,7 @@ func (h *Handler) NaiveConsume(c *gin.Context) {
 
 	outcome, err := naiveProcessor(topic)(ctx, h.pool, msg)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, outcome)
@@ -132,7 +131,7 @@ func (h *Handler) SafeConsume(c *gin.Context) {
 	ctx := c.Request.Context()
 	msg, err := queue.Claim(ctx, h.pool, topic, "safe-"+uuid.NewString(), leaseSeconds(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	if msg == nil {
@@ -148,7 +147,7 @@ func (h *Handler) SafeConsume(c *gin.Context) {
 		outcome, err = consumer.ProcessOrderSafe(ctx, h.pool, msg, chaos)
 	}
 	if err != nil && !errors.Is(err, consumer.ErrChaosCrashBeforeCommit) {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	// A chaos-triggered rollback is an intentional lab outcome, not a
@@ -177,7 +176,7 @@ func (h *Handler) RelayRun(c *gin.Context) {
 	}
 	n, err := outbox.RunOnce(c.Request.Context(), h.pool, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"published": n})
@@ -209,7 +208,7 @@ func (h *Handler) ForceRedeliver(c *gin.Context) {
 		return
 	}
 	if err := queue.ForceRedeliver(c.Request.Context(), h.pool, req.MessageID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message_id": req.MessageID, "status": "pending"})
@@ -236,25 +235,8 @@ func (h *Handler) ForceExpireLease(c *gin.Context) {
 		return
 	}
 	if err := queue.ForceExpireLease(c.Request.Context(), h.pool, req.MessageID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message_id": req.MessageID, "lease": "expired"})
-}
-
-func parsePositiveInt(s string) (int, error) {
-	n, err := strconv.Atoi(s)
-	if err != nil || n <= 0 {
-		return 0, strconv.ErrSyntax
-	}
-	return n, nil
-}
-
-func leaseSeconds(c *gin.Context) int {
-	if v := c.Query("lease_seconds"); v != "" {
-		if n, err := parsePositiveInt(v); err == nil {
-			return n
-		}
-	}
-	return defaultLeaseSeconds
 }

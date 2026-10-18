@@ -36,7 +36,7 @@ func (h *Handler) Stats(c *gin.Context) {
 	rows, err := h.pool.Query(ctx, `
 		SELECT consumer, op, count(*) FROM audit_log GROUP BY consumer, op ORDER BY consumer, op`)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	var audits []auditCount
@@ -44,7 +44,7 @@ func (h *Handler) Stats(c *gin.Context) {
 		var a auditCount
 		if err := rows.Scan(&a.Consumer, &a.Op, &a.Count); err != nil {
 			rows.Close()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			fail(c, err)
 			return
 		}
 		audits = append(audits, a)
@@ -54,7 +54,7 @@ func (h *Handler) Stats(c *gin.Context) {
 	qrows, err := h.pool.Query(ctx, `
 		SELECT topic, status, count(*) FROM queue_messages GROUP BY topic, status ORDER BY topic, status`)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	var queues []queueCount
@@ -62,7 +62,7 @@ func (h *Handler) Stats(c *gin.Context) {
 		var q queueCount
 		if err := qrows.Scan(&q.Topic, &q.Status, &q.Count); err != nil {
 			qrows.Close()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			fail(c, err)
 			return
 		}
 		queues = append(queues, q)
@@ -71,23 +71,23 @@ func (h *Handler) Stats(c *gin.Context) {
 
 	var orders, notificationsSent, inboxRows, outboxPending, outboxPublished int64
 	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM orders`).Scan(&orders); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM notifications_sent`).Scan(&notificationsSent); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM inbox_processed`).Scan(&inboxRows); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE NOT published`).Scan(&outboxPending); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE published`).Scan(&outboxPublished); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (h *Handler) Reset(c *gin.Context) {
 		TRUNCATE queue_messages, inbox_processed, orders, notifications_sent,
 		         outbox_events, audit_log RESTART IDENTITY`)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		fail(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"reset": true})
