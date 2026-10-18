@@ -77,7 +77,7 @@ func (h *Handler) GetUser(c *gin.Context) {
 		 WHERE id = $1::uuid AND deleted_at IS NULL`, c.Param("id")).
 		Scan(&u.ID, &u.Name, &u.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		notFound(c)
 		return
 	}
 	if err != nil {
@@ -122,7 +122,7 @@ func (h *Handler) GetUser(c *gin.Context) {
 func (h *Handler) CreateUser(c *gin.Context) {
 	var in model.CreateUserReq
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		invalidBody(c)
 		return
 	}
 
@@ -170,7 +170,7 @@ func (h *Handler) CreateUser(c *gin.Context) {
 func (h *Handler) PutUserNaive(c *gin.Context) {
 	var in model.PutUserReq
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		invalidBody(c)
 		return
 	}
 
@@ -225,7 +225,7 @@ func (h *Handler) PutUserNaive(c *gin.Context) {
 func (h *Handler) PutUserSafe(c *gin.Context) {
 	var in model.PutUserReq
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		invalidBody(c)
 		return
 	}
 	id := c.Param("id")
@@ -321,7 +321,7 @@ func (h *Handler) PutUserSafe(c *gin.Context) {
 func (h *Handler) PatchUserNaive(c *gin.Context) {
 	var in model.PatchUserNaiveReq
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		invalidBody(c)
 		return
 	}
 
@@ -335,7 +335,7 @@ func (h *Handler) PatchUserNaive(c *gin.Context) {
 		RETURNING id, name, version`, c.Param("id"), in.AppendName).
 		Scan(&u.ID, &u.Name, &u.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		notFound(c)
 		return
 	}
 	if err != nil {
@@ -382,7 +382,7 @@ func (h *Handler) PatchUserSafe(c *gin.Context) {
 
 	var in model.PatchUserReq
 	if err := c.ShouldBindJSON(&in); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+		invalidBody(c)
 		return
 	}
 
@@ -481,7 +481,7 @@ func (h *Handler) DeleteUserNaive(c *gin.Context) {
 	audit(db, c, "delete", "users", c.Param("id"))
 
 	if tag.RowsAffected() == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+		notFound(c)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -523,7 +523,7 @@ func (h *Handler) DeleteUserSafe(c *gin.Context) {
 		if err := db.QueryRow(c,
 			`SELECT deleted_at IS NOT NULL FROM users WHERE id = $1::uuid`, id).
 			Scan(&tombstone); errors.Is(err, pgx.ErrNoRows) {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+			notFound(c)
 			return
 		} else if err != nil {
 			fail(c, err)

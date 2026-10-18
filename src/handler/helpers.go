@@ -53,6 +53,16 @@ func fail(c *gin.Context, err error) {
 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 }
 
+// notFound answers 404 when no row matches the id.
+func notFound(c *gin.Context) {
+	c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
+}
+
+// invalidBody answers 400 when the JSON body fails to bind.
+func invalidBody(c *gin.Context) {
+	c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body"})
+}
+
 const uniqueViolation = "23505"
 
 // isUniqueViolation reports whether err is Postgres error 23505, the
