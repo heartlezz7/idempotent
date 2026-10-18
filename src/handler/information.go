@@ -8,7 +8,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/heartlezz7/idempotent/src/model"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // =====================================================================
@@ -22,13 +21,6 @@ import (
 // The only design question left is what you RETURN when the constraint
 // fires, and that is where the naive and safe versions differ.
 // =====================================================================
-
-const uniqueViolation = "23505"
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == uniqueViolation
-}
 
 // @Summary		List information
 // @Description	Pure read; identical on both trees.

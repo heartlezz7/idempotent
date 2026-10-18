@@ -2,10 +2,7 @@ package handler
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -22,39 +19,6 @@ func New(pool *pgxpool.Pool) *Handler { return &Handler{pool: pool} }
 // db returns the middleware's transaction when one exists, otherwise the
 // pool. Handlers never care which they got.
 func (h *Handler) db(c *gin.Context) middleware.DB { return middleware.DBFrom(c, h.pool) }
-
-// audit appends to the observable side-effect log. Count these rows to
-// see whether an endpoint really is idempotent.
-func audit(db middleware.DB, c *gin.Context, op, resource, id string) {
-	_, _ = db.Exec(c,
-		`INSERT INTO audit_log (op, resource, resource_id, route) VALUES ($1,$2,$3,$4)`,
-		op, resource, id, c.Request.URL.Path)
-}
-
-func etag(version int) string { return fmt.Sprintf(`"v%d"`, version) }
-
-// parseETag turns `"v41"` (or `W/"v41"`) back into 41.
-func parseETag(s string) (int, bool) {
-	s = strings.TrimPrefix(s, "W/")
-	s = strings.Trim(s, `"`)
-	s = strings.TrimPrefix(s, "v")
-	n, err := strconv.Atoi(s)
-	return n, err == nil
-}
-
-// chaos lets you simulate a failure AFTER the write but BEFORE the
-// response. Send `X-Chaos: fail-after-write`.
-//
-//	/naive -> the insert already autocommitted; the retry duplicates it.
-//	/safe  -> the transaction rolls back, the key is released, and the
-//	          retry re-runs cleanly. Exactly one row either way.
-func chaos(c *gin.Context) bool {
-	if c.GetHeader("X-Chaos") == "fail-after-write" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "simulated_failure_after_write"})
-		return true
-	}
-	return false
-}
 
 // =====================================================================
 // GET  -- safe and idempotent by construction. Identical on both trees.
@@ -572,8 +536,4 @@ func (h *Handler) DeleteUserSafe(c *gin.Context) {
 	// Reached only on the first successful delete.
 	audit(db, c, "delete", "users", id)
 	c.Status(http.StatusNoContent)
-}
-
-func fail(c *gin.Context, err error) {
-	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 }
