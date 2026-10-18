@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idempotency — the same request, twice</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=Newsreader:opsz,wght@6..72,400;6..72,500&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#E4E2DA;
+  --paper-2:#EFEDE7;
+  --ink:#14161A;
+  --slate:#4A525C;
+  --wash:#CFCCC2;
+  --stamp:#B3382C;
+  --seal:#1F5D50;
+  --amber:#8A6212;
+
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --disp:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"Newsreader",Georgia,serif;
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--paper);color:var(--ink);
+  font-family:var(--body);font-size:17px;line-height:1.62;
+  background-image:radial-gradient(var(--wash) .5px,transparent .5px);
+  background-size:22px 22px;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+
+/* ---------- type ---------- */
+h1,h2,h3,.eyebrow,.tab,.btn,.lbl{font-family:var(--disp)}
+.eyebrow{
+  font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;
+  color:var(--slate);
+}
+h1{
+  font-size:clamp(38px,7.4vw,78px);font-weight:800;line-height:.94;
+  letter-spacing:-.03em;text-transform:uppercase;margin:14px 0 0;
+}
+h1 em{font-style:normal;color:var(--stamp)}
+h2{font-size:clamp(24px,3.4vw,34px);font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0 0 6px}
+h3{font-size:15px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin:34px 0 10px}
+h3:first-child{margin-top:0}
+p{margin:0 0 14px;max-width:68ch}
+.deck{font-size:20px;line-height:1.5;color:var(--slate);max-width:60ch;margin-top:18px}
+code,.mono{font-family:var(--mono);font-size:.86em}
+p code,li code,td code{background:var(--paper-2);border:1px solid var(--wash);border-radius:3px;padding:.05em .35em}
+strong{font-weight:600}
+a{color:var(--seal)}
+
+/* ---------- header ---------- */
+header{padding:56px 0 26px;border-bottom:2px solid var(--ink)}
+.rule-thin{border-top:1px solid var(--wash);margin:0}
+
+/* ---------- simulator ---------- */
+.sim{border:2px solid var(--ink);background:var(--paper-2);margin:34px 0 0}
+.sim-bar{
+  display:flex;flex-wrap:wrap;gap:18px;align-items:center;
+  padding:12px 16px;border-bottom:1px solid var(--wash);
+}
+.lbl{font-size:10px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--slate);margin-right:8px}
+.seg{display:flex;border:1px solid var(--ink)}
+.seg button{
+  font-family:var(--mono);font-size:11.5px;font-weight:500;
+  background:transparent;border:0;border-right:1px solid var(--wash);
+  padding:7px 11px;cursor:pointer;color:var(--slate);
+}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper-2)}
+.seg button:focus-visible,.btn:focus-visible,.tab:focus-visible{outline:2px solid var(--stamp);outline-offset:2px}
+.btn{
+  margin-left:auto;background:var(--stamp);color:#fff;border:0;
+  font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  padding:9px 20px;cursor:pointer;
+}
+.btn[disabled]{background:var(--wash);color:var(--slate);cursor:default}
+
+.panes{display:grid;grid-template-columns:1.35fr 1fr}
+@media(max-width:760px){.panes{grid-template-columns:1fr}}
+.pane{padding:14px 16px 18px;min-height:320px}
+.pane+.pane{border-left:1px solid var(--wash)}
+@media(max-width:760px){.pane+.pane{border-left:0;border-top:1px solid var(--wash)}}
+.pane-h{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--slate);margin-bottom:12px}
+
+/* wire trace */
+.trace{font-family:var(--mono);font-size:12.5px;line-height:1.5;margin:0;list-style:none;padding:0}
+.trace li{
+  display:grid;grid-template-columns:20px 1fr;gap:8px;padding:3px 0;
+  animation:slide .26s ease-out both;
+}
+.trace .g{color:var(--slate)}
+.trace .arrow{color:var(--slate)}
+.trace .bad{color:var(--stamp);font-weight:700}
+.trace .good{color:var(--seal);font-weight:700}
+.trace .note{grid-column:2;font-family:var(--body);font-size:13.5px;color:var(--slate);padding-left:0}
+@keyframes slide{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+
+/* receipt */
+.receipt{
+  background:#F7F5F0;border:1px solid var(--wash);padding:16px 16px 20px;
+  font-family:var(--mono);font-size:12px;position:relative;
+  box-shadow:0 1px 0 var(--wash),0 6px 14px rgba(20,22,26,.06);
+}
+.receipt::after{
+  content:"";position:absolute;left:0;right:0;bottom:-9px;height:9px;
+  background:repeating-linear-gradient(90deg,#F7F5F0 0 7px,transparent 7px 14px);
+}
+.r-head{text-align:center;letter-spacing:.1em;font-weight:700;font-size:11px;padding-bottom:8px;border-bottom:1px dashed var(--wash)}
+.r-line{display:flex;justify-content:space-between;gap:10px;padding:5px 0;animation:slide .26s ease-out both}
+.r-line.dupe{color:var(--stamp)}
+.r-line.replay{color:var(--seal)}
+.r-total{display:flex;justify-content:space-between;border-top:1px dashed var(--wash);margin-top:8px;padding-top:8px;font-weight:700}
+.r-empty{color:var(--slate);text-align:center;padding:14px 0}
+.stamp{
+  margin-top:16px;border:2px solid currentColor;padding:6px 10px;text-align:center;
+  font-family:var(--disp);font-weight:800;font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  transform:rotate(-2.5deg);animation:thud .3s cubic-bezier(.2,1.6,.4,1) both;
+}
+.stamp.bad{color:var(--stamp)}
+.stamp.ok{color:var(--seal)}
+@keyframes thud{from{opacity:0;transform:rotate(-14deg) scale(1.5)}to{opacity:1;transform:rotate(-2.5deg) scale(1)}}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;flex-wrap:wrap;gap:0;border-bottom:2px solid var(--ink);margin:64px 0 0;position:sticky;top:0;background:var(--paper);z-index:5}
+.tab{
+  background:transparent;border:0;border-bottom:3px solid transparent;
+  font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  padding:14px 15px;cursor:pointer;color:var(--slate);margin-bottom:-2px;
+}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--stamp)}
+.panel{padding:34px 0 0}
+.panel[hidden]{display:none}
+
+/* ---------- content bits ---------- */
+table{border-collapse:collapse;width:100%;font-size:14px;margin:6px 0 18px;font-family:var(--disp)}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--wash);vertical-align:top}
+th{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--slate);border-bottom:1px solid var(--ink)}
+td.y{color:var(--seal);font-weight:700}
+td.n{color:var(--stamp);font-weight:700}
+td.m{color:var(--amber);font-weight:700}
+tbody tr:hover{background:var(--paper-2)}
+
+pre{
+  background:var(--ink);color:#DCDDD8;font-family:var(--mono);font-size:12.5px;line-height:1.6;
+  padding:16px 18px;overflow-x:auto;margin:0 0 18px;border-left:3px solid var(--stamp);
+}
+pre .c{color:#7F8A83;font-style:italic}
+pre .k{color:#E8A33D}
+pre .s{color:#8FBF9F}
+
+.callout{border-left:3px solid var(--seal);background:var(--paper-2);padding:12px 16px;margin:0 0 18px}
+.callout.warn{border-left-color:var(--stamp)}
+.callout p{margin:0;max-width:none;font-size:15.5px}
+.callout .lbl{display:block;margin-bottom:4px;color:var(--seal)}
+.callout.warn .lbl{color:var(--stamp)}
+
+ul.clean{list-style:none;padding:0;margin:0 0 18px}
+ul.clean li{padding:8px 0 8px 26px;border-bottom:1px solid var(--wash);position:relative;max-width:70ch}
+ul.clean li::before{content:"—";position:absolute;left:0;color:var(--stamp);font-family:var(--mono)}
+
+/* step-through */
+.stepper{border:2px solid var(--ink);background:var(--paper-2);margin:0 0 22px}
+.step-nav{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--wash)}
+.dots{display:flex;gap:6px;flex-wrap:wrap}
+.dot{width:26px;height:26px;border:1px solid var(--ink);background:transparent;font-family:var(--mono);font-size:11px;cursor:pointer;color:var(--slate);padding:0}
+.dot[aria-current="true"]{background:var(--ink);color:var(--paper-2)}
+.step-body{padding:18px 18px 22px;min-height:190px}
+.step-body h4{font-family:var(--disp);font-size:19px;margin:0 0 8px;letter-spacing:-.01em}
+.step-body p{margin-bottom:10px;font-size:16px}
+.nav-btn{font-family:var(--mono);font-size:11px;border:1px solid var(--ink);background:transparent;padding:6px 12px;cursor:pointer}
+.nav-btn[disabled]{opacity:.35;cursor:default}
+
+/* code sub-tabs */
+.codetabs{display:flex;gap:0;margin:0}
+.codetabs button{
+  font-family:var(--mono);font-size:11px;background:var(--paper-2);border:1px solid var(--wash);border-bottom:0;
+  padding:7px 14px;cursor:pointer;color:var(--slate);
+}
+.codetabs button[aria-selected="true"]{background:var(--ink);color:var(--paper-2);border-color:var(--ink)}
+
+footer{margin-top:70px;padding-top:20px;border-top:2px solid var(--ink);font-family:var(--mono);font-size:11px;color:var(--slate);display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Deep dive · RFC 9110 §9.2.2 · distributed systems</div>
+  <h1>The same request,<br><em>twice</em></h1>
+  <p class="deck">A client sends a payment. The connection dies before the response comes back. The client cannot tell whether it charged the customer or not. Idempotency is the entire discipline built around that one moment.</p>
+</header>
+
+<!-- ============ SIGNATURE: RETRY SIMULATOR ============ -->
+<section class="sim" aria-label="Retry simulator">
+  <div class="sim-bar">
+    <span class="lbl">Failure</span>
+    <div class="seg" id="scenSeg">
+      <button data-scen="lost" aria-pressed="true">response lost</button>
+      <button data-scen="race" aria-pressed="false">two retries at once</button>
+      <button data-scen="crash" aria-pressed="false">crash mid-write</button>
+    </div>
+    <span class="lbl">Idempotency-Key</span>
+    <div class="seg" id="keySeg">
+      <button data-key="off" aria-pressed="true">off</button>
+      <button data-key="on" aria-pressed="false">on</button>
+    </div>
+    <button class="btn" id="runBtn">Run</button>
+  </div>
+  <div class="panes">
+    <div class="pane">
+      <div class="pane-h">Wire trace</div>
+      <ul class="trace" id="trace"><li><span class="arrow">·</span><span class="g">Pick a failure mode and run it.</span></li></ul>
+    </div>
+    <div class="pane">
+      <div class="pane-h">Server ledger</div>
+      <div class="receipt" id="receipt">
+        <div class="r-head">ACME PAYMENTS · CAPTURES</div>
+        <div class="r-empty" id="rEmpty">no captures yet</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ TABS ============ -->
+<div class="tabs" role="tablist" id="tablist">
+  <button class="tab" role="tab" aria-selected="true"  aria-controls="p1" id="t1">Foundations</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="p2" id="t2">Keys</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="p3" id="t3">The algorithm</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="p4" id="t4">Storage</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="p5" id="t5">Races &amp; recovery</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="p6" id="t6">Beyond HTTP</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="p7" id="t7">Pitfalls</button>
+</div>
+
+<!-- ---------- 1 FOUNDATIONS ---------- -->
+<section class="panel" role="tabpanel" id="p1" aria-labelledby="t1">
+  <h2>What the word actually means</h2>
+  <p>An operation is idempotent if performing it <em>N ≥ 1</em> times leaves the server in the same state as performing it once. Formally, <code>f(f(x)) = f(x)</code>.</p>
+
+  <div class="callout">
+    <span class="lbl">The part people get wrong</span>
+    <p>Idempotency constrains the <strong>effect on server state</strong>, not the response the client receives. <code>DELETE /orders/42</code> is idempotent even though the first call returns <code>204</code> and the second returns <code>404</code>. The order is gone either way. Judging idempotency by comparing response bodies will lead you astray.</p>
+  </div>
+
+  <h3>Four properties people conflate</h3>
+  <table>
+    <thead><tr><th>Property</th><th>Means</th><th>Protects against</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Safe</strong></td><td>No state change at all. Read-only.</td><td>Crawlers, prefetch, speculative requests</td></tr>
+      <tr><td><strong>Idempotent</strong></td><td>Repeating it changes nothing further.</td><td>Retries by the <em>same</em> client</td></tr>
+      <tr><td><strong>Cacheable</strong></td><td>The response may be stored and reused.</td><td>Latency and origin load</td></tr>
+      <tr><td><strong>Concurrency-safe</strong></td><td>Interleaved writes don't corrupt or lose data.</td><td>Two <em>different</em> clients writing at once</td></tr>
+    </tbody>
+  </table>
+  <p>Every safe method is idempotent; the reverse isn't true. And idempotency gives you <strong>nothing</strong> against lost updates from concurrent writers — that needs <code>ETag</code> / <code>If-Match</code> or a version column. Two separate concerns, routinely mashed together.</p>
+
+  <h3>Method semantics</h3>
+  <table>
+    <thead><tr><th>Method</th><th>Safe</th><th>Idempotent</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>GET / HEAD</td><td class="y">yes</td><td class="y">yes</td><td>Pure read.</td></tr>
+      <tr><td>OPTIONS / TRACE</td><td class="y">yes</td><td class="y">yes</td><td>Metadata only.</td></tr>
+      <tr><td>PUT</td><td class="n">no</td><td class="y">yes</td><td>Full replacement at a known URI. Writing the same document twice lands on the same state.</td></tr>
+      <tr><td>DELETE</td><td class="n">no</td><td class="y">yes</td><td>Target ends up absent regardless of how many times you ask.</td></tr>
+      <tr><td>POST</td><td class="n">no</td><td class="n">no</td><td>The server picks the URI, so each call is a new resource. This is where the money bugs live.</td></tr>
+      <tr><td>PATCH</td><td class="n">no</td><td class="m">depends</td><td>Not guaranteed by spec. <code>{"balance": 500}</code> is idempotent; <code>{"op":"increment","by":1}</code> is not.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <span class="lbl">Semantics are a promise, not a mechanism</span>
+    <p>HTTP declaring <code>PUT</code> idempotent doesn't make <em>your</em> <code>PUT</code> handler idempotent. If it appends to an audit table, fires a webhook, or increments a counter, you've broken the contract — and intermediaries that legitimately retry idempotent methods will duplicate those effects for you, silently.</p>
+  </div>
+
+  <h3>Why retries are unavoidable</h3>
+  <p>When a request times out, exactly three things could have happened: it never arrived; it arrived, succeeded, and the response was lost; or it arrived and failed. <strong>The client cannot distinguish these.</strong> This is the Two Generals problem, and it has no solution — you cannot achieve exactly-once <em>delivery</em> over an unreliable network.</p>
+  <p>What you can achieve is at-least-once delivery plus idempotent processing, which yields <em>effectively-once</em> semantics. Retries stop being dangerous, so every layer is free to retry: SDKs, service meshes, load balancers, mobile clients on flaky networks, queue consumers after a rebalance.</p>
+</section>
+
+<!-- ---------- 2 KEYS ---------- -->
+<section class="panel" role="tabpanel" id="p2" aria-labelledby="t2" hidden>
+  <h2>Idempotency keys</h2>
+  <p>For operations that aren't naturally idempotent — <code>POST /charges</code>, <code>POST /transfers</code> — the client supplies a unique token identifying the <em>logical operation</em>. The server records what it did under that token and replays the answer on any repeat.</p>
+
+<pre><span class="c"># The wire format (IETF httpapi draft; Stripe, Adyen, Square, PayPal all use it)</span>
+POST /v1/charges HTTP/1.1
+Host: api.example.com
+<span class="k">Idempotency-Key</span>: 4f2a91c8-9d3e-4b7a-8f11-2c6e5d0a7b39
+Content-Type: application/json
+
+{"amount": 5000, "currency": "usd", "customer": "cus_9182"}</pre>
+
+  <h3>Rules for generating them</h3>
+  <ul class="clean">
+    <li><strong>Generated by the client, once, before the first attempt.</strong> Persist it alongside the retry loop. A key regenerated per attempt defeats the entire mechanism — this is the single most common client-side bug.</li>
+    <li><strong>One key per logical intent, not per HTTP call.</strong> "Pay invoice #8891" gets one key. Paying it again next month is a different intent and needs a new one.</li>
+    <li><strong>Opaque and collision-free.</strong> UUIDv4 is the default. UUIDv7 additionally sorts by time, which helps index locality and expiry sweeps.</li>
+    <li><strong>Never derived from mutable state.</strong> A key built from <code>hash(cart_contents)</code> breaks the moment a customer legitimately buys the same thing twice.</li>
+    <li><strong>Scoped server-side by tenant and endpoint.</strong> The uniqueness domain is <code>(api_key, endpoint, key)</code>. A global namespace lets one tenant's key collide with — or read back — another's response.</li>
+  </ul>
+
+  <h3>Request fingerprinting</h3>
+  <p>Store a hash of the request alongside the key. On a repeat, compare: matching fingerprint means a genuine retry, mismatched means the client reused a key for different content — a bug worth surfacing as <code>422 Unprocessable Content</code> rather than silently returning the old answer.</p>
+<pre>fingerprint = sha256(method ‖ path ‖ canonical_json(body))</pre>
+  <p>Canonicalise before hashing (sort keys, normalise numbers) or map reordering will produce false mismatches. Exclude volatile fields — trace IDs, client timestamps, <code>User-Agent</code> — or every retry from a different pod fails validation.</p>
+
+  <h3>Often you don't need keys at all</h3>
+  <p>Key infrastructure is real cost: a table, a TTL sweeper, an extra round trip, a state machine. Reach for cheaper structural options first.</p>
+  <table>
+    <thead><tr><th>Technique</th><th>Shape</th><th>Good for</th></tr></thead>
+    <tbody>
+      <tr><td>Client-assigned ID</td><td><code>PUT /orders/{uuid}</code></td><td>Creation you control the ID for. Retry is an upsert no-op. Free.</td></tr>
+      <tr><td>Unique business constraint</td><td><code>UNIQUE(tenant, invoice_no)</code></td><td>The database rejects the duplicate; catch the violation and return the existing row.</td></tr>
+      <tr><td>Guarded state transition</td><td><code>UPDATE … WHERE status='paid'</code></td><td>Retry affects 0 rows and is harmless. Check the row count, don't assume.</td></tr>
+      <tr><td>Conditional write</td><td><code>If-Match: "v7"</code> → <code>412</code></td><td>Gives you optimistic concurrency <em>and</em> replay protection at once.</td></tr>
+      <tr><td>Two-phase intent</td><td><code>POST /intents</code> then <code>POST /intents/{id}/confirm</code></td><td>The confirm step is naturally idempotent against a known resource.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <span class="lbl">Rule of thumb</span>
+    <p>Reserve idempotency keys for irreversible side effects you can't express as a constraint: money movement, outbound email and SMS, third-party API calls, physical fulfilment.</p>
+  </div>
+</section>
+
+<!-- ---------- 3 ALGORITHM ---------- -->
+<section class="panel" role="tabpanel" id="p3" aria-labelledby="t3">
+  <h2>Server-side algorithm</h2>
+  <p>Step through the full path. The ordering is not arbitrary — each step exists to close a specific failure window.</p>
+
+  <div class="stepper">
+    <div class="step-nav">
+      <button class="nav-btn" id="prevStep">← prev</button>
+      <div class="dots" id="dots"></div>
+      <button class="nav-btn" id="nextStep">next →</button>
+    </div>
+    <div class="step-body" id="stepBody"></div>
+  </div>
+
+  <h3>Reference implementation</h3>
+  <div class="codetabs" id="codetabs">
+    <button aria-selected="true"  data-code="sql">schema.sql</button>
+    <button aria-selected="false" data-code="go">handler.go</button>
+    <button aria-selected="false" data-code="js">handler.js</button>
+  </div>
+  <pre id="codeBox"></pre>
+
+  <div class="callout warn">
+    <span class="lbl">The one invariant</span>
+    <p>The business effect and the saved receipt must commit <strong>atomically</strong>. Same transaction, same database. Write the charge and then update the key in a second transaction and you've reintroduced the exact ambiguity you set out to eliminate — now with extra tables.</p>
+  </div>
+</section>
+
+<!-- ---------- 4 STORAGE ---------- -->
+<section class="panel" role="tabpanel" id="p4" aria-labelledby="t4" hidden>
+  <h2>Where receipts live</h2>
+
+  <table>
+    <thead><tr><th></th><th>Same SQL database as your data</th><th>Redis / dedicated store</th></tr></thead>
+    <tbody>
+      <tr><td>Atomic with the effect</td><td class="y">yes — one transaction</td><td class="n">no — needs an outbox or saga</td></tr>
+      <tr><td>Latency</td><td>one extra round trip</td><td class="y">sub-millisecond</td></tr>
+      <tr><td>Expiry</td><td>you sweep it</td><td class="y">native TTL</td></tr>
+      <tr><td>Durability on failover</td><td class="y">as durable as your data</td><td class="m">async replication can lose keys</td></tr>
+      <tr><td>Verdict</td><td colspan="2">SQL unless you've measured a problem. A Redis key lost during failover is a double charge.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Retention</h3>
+  <p>24 hours is the common default (Stripe's). It needs to comfortably exceed your longest client retry window, including a mobile app that retries when the user reopens it tomorrow. Longer TTLs cost storage; shorter ones silently stop protecting anyone.</p>
+  <p>Whatever you choose, <strong>document it</strong>. After expiry a repeated key is treated as a brand-new request, and callers need to know that boundary exists. Sweep with a batched, indexed delete — <code>DELETE … WHERE expires_at &lt; now() LIMIT 10000</code> in a loop beats one enormous statement holding locks.</p>
+
+  <h3>What to store in the receipt</h3>
+  <ul class="clean">
+    <li>Status code, response body, and any headers the client depends on (<code>Location</code>, <code>ETag</code>).</li>
+    <li>Large payloads: store the resource ID instead and re-serialise on replay. Cheaper, but it means replays reflect <em>current</em> state — fine for most APIs, wrong if callers rely on byte-identical replays.</li>
+    <li>Mark replays with a response header such as <code>Idempotent-Replayed: true</code>. Costs nothing; invaluable when you're staring at a dashboard trying to explain a traffic pattern.</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="lbl">Don't cache failures indiscriminately</span>
+    <p>Deterministic <code>4xx</code> (validation) can be saved — replaying it is correct and cheap. Transient <code>5xx</code> and timeouts must <strong>release</strong> the key so a retry can actually re-execute. Persist a <code>500</code> as a completed receipt and you've permanently poisoned that operation: every retry replays the failure forever.</p>
+  </div>
+
+  <h3>Propagating downstream</h3>
+  <p>If your handler calls Stripe, your own idempotency is worthless unless that call is protected too. Derive the downstream key <em>deterministically</em> from yours so a retry produces the same token:</p>
+<pre>downstream_key = sha256(our_key ‖ ":stripe:charge")
+
+<span class="c">// A fresh uuid.New() here would double-charge on retry.</span>
+<span class="c">// The derivation must be pure — no clocks, no randomness.</span></pre>
+</section>
+
+<!-- ---------- 5 RACES ---------- -->
+<section class="panel" role="tabpanel" id="p5" aria-labelledby="t5" hidden>
+  <h2>Races and recovery</h2>
+
+  <h3>Never check-then-act</h3>
+  <p><code>SELECT</code> followed by <code>INSERT</code> is a time-of-check-to-time-of-use race. Two concurrent retries both read "not found", both proceed, both charge. Claim the key in a <strong>single atomic statement</strong> and let the unique constraint arbitrate.</p>
+<pre><span class="c">-- Postgres</span>
+INSERT INTO idempotency_keys (...) VALUES (...)
+ON CONFLICT (tenant_id, endpoint, key) DO NOTHING
+RETURNING id;          <span class="c">-- zero rows means someone else owns it</span>
+
+<span class="c">-- Redis</span>
+SET idem:{tenant}:{ep}:{key} "in_progress" NX PX 30000</pre>
+
+  <h3>Losing the race</h3>
+  <p>The loser has two reasonable options:</p>
+  <ul class="clean">
+    <li><strong>Return <code>409 Conflict</code></strong> with a <code>Retry-After</code> hint. Simple, holds no resources, pushes the wait to the client. Stripe's <code>idempotency_key_in_use</code>.</li>
+    <li><strong>Block and poll</strong> until the winner completes, then replay its response. Nicer for callers, but it pins a connection and needs its own timeout — otherwise a slow winner turns into a thread-pool outage.</li>
+  </ul>
+
+  <h3>The stuck in-progress problem</h3>
+  <p>A pod claims a key, then gets OOM-killed. The row sits <code>in_progress</code> forever and every retry gets <code>409</code> — the operation is permanently wedged. Fix it with a <strong>lease</strong>: store <code>lease_expires_at</code>, and let a later request take over an expired claim.</p>
+  <div class="callout warn">
+    <span class="lbl">Leases don't fence zombies</span>
+    <p>An expired lease means "probably dead", not "definitely dead". The original process may be alive behind a network partition and about to commit. Two defences: keep the lease longer than your hard request timeout, and put a real uniqueness constraint on the underlying resource so a takeover physically cannot produce a second charge. Idempotency keys are a fast path; the database constraint is the backstop.</p>
+  </div>
+
+  <h3>Crash windows, walked through</h3>
+  <table>
+    <thead><tr><th>Crash point</th><th>Effect</th><th>Receipt</th><th>What the retry does</th></tr></thead>
+    <tbody>
+      <tr><td>Before claiming</td><td class="n">none</td><td class="n">none</td><td>Runs cleanly. No harm.</td></tr>
+      <tr><td>After claim, before commit</td><td class="n">rolled back</td><td>in_progress</td><td>Waits for the lease, takes over, re-executes. Correct.</td></tr>
+      <tr><td>After commit, before responding</td><td class="y">committed</td><td class="y">completed</td><td>Replays the stored response. Correct.</td></tr>
+      <tr><td class="m">Split stores</td><td class="y">committed</td><td class="n">lost</td><td class="n">Re-executes. Double charge. This is why one transaction matters.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Idempotency is not concurrency control</h3>
+  <p>Two <em>different</em> users editing the same document with different keys will both succeed, and the second overwrites the first. Nothing about idempotency prevents that. Add versioning:</p>
+<pre>GET  /docs/7        → 200  ETag: "v41"
+PUT  /docs/7        If-Match: "v41"   → 200 OK
+PUT  /docs/7        If-Match: "v41"   → 412 Precondition Failed
+                                        <span class="c">(someone advanced it to v42)</span></pre>
+</section>
+
+<!-- ---------- 6 BEYOND HTTP ---------- -->
+<section class="panel" role="tabpanel" id="p6" aria-labelledby="t6" hidden>
+  <h2>Beyond HTTP: queues and streams</h2>
+  <p>The same problem, different transport. A consumer processes a message, then dies before committing its offset. On rebalance, another consumer replays it. At-least-once delivery is the norm, so handler idempotency is mandatory.</p>
+
+  <h3>Kafka's "exactly-once", precisely</h3>
+  <p>Two distinct mechanisms, frequently conflated:</p>
+  <table>
+    <thead><tr><th>Mechanism</th><th>Config</th><th>What it actually guarantees</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Idempotent producer</strong></td><td><code>enable.idempotence=true</code></td><td>Broker assigns a producer ID and tracks a monotonic sequence number per (PID, partition). Duplicate sequences from producer retries are dropped. Scope: one producer session, per partition.</td></tr>
+      <tr><td><strong>Transactions</strong></td><td><code>transactional.id</code></td><td>Atomic writes across partitions, plus <code>sendOffsetsToTransaction</code> so consume-process-produce commits as one unit. The <code>transactional.id</code> survives restarts and fences zombies via an epoch bump. Readers need <code>isolation.level=read_committed</code>.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <span class="lbl">The boundary</span>
+    <p>Kafka EOS covers <strong>Kafka to Kafka</strong>. The moment your consumer makes an HTTP call, writes to a non-participating database, or sends an email, that effect is outside the transaction and will be repeated on replay. Consumer-side idempotency is still your job.</p>
+  </div>
+
+  <h3>Making consumers idempotent</h3>
+  <ul class="clean">
+    <li><strong>Inbox table.</strong> <code>INSERT INTO processed(message_id) ON CONFLICT DO NOTHING</code> in the same transaction as the effect. Zero rows inserted means already handled — skip. Same pattern as the HTTP key, different identifier source.</li>
+    <li><strong>Natural idempotency.</strong> An upsert keyed on a business ID needs no dedup table at all. Preferred where the data model allows it.</li>
+    <li><strong>Transactional outbox.</strong> Write your state change and the outgoing message to the same database transaction; a relay publishes from the outbox. Removes the dual-write problem at its root.</li>
+    <li><strong>Monotonic guards.</strong> <code>UPDATE … WHERE version &lt; :incoming</code> makes out-of-order and repeated deliveries both harmless.</li>
+  </ul>
+
+  <h3>Diagrams of this lab</h3>
+  <p>The async-flow lab applies all four patterns over a Postgres-backed queue. Two interactive diagrams walk through it:</p>
+  <ul class="clean">
+    <li><a href="async-flow.html"><strong>Async queue flow</strong></a> — architecture. A producer publishes with a <code>dedupe_key</code>. The order consumer commits a version-guarded upsert and an <code>outbox_events</code> row in one transaction. The relay republishes under <code>outbox:{id}</code>, and the notification consumer claims <code>inbox_processed</code> together with the send.</li>
+    <li><a href="queue-message.html"><strong>Message delivery lifecycle</strong></a> — the states of a <code>queue_messages</code> row: pending, leased, effect committed, done. Also covers the two <code>?chaos=</code> crash points and the <code>/_duplicate</code> replay, and why none of them produces a second effect.</li>
+  </ul>
+
+  <h3>What other platforms call it</h3>
+  <ul class="clean">
+    <li><strong>AWS</strong> — <code>ClientToken</code> (EC2, RDS) and SQS FIFO's <code>MessageDeduplicationId</code>, with a fixed 5-minute dedup window.</li>
+    <li><strong>gRPC</strong> — no header convention; put the key in metadata and check the method's idempotency level before enabling automatic retries in your service config.</li>
+    <li><strong>Stripe</strong> — <code>Idempotency-Key</code>, 24-hour retention, <code>409</code> while in flight, results not saved for requests that never got a response.</li>
+  </ul>
+</section>
+
+<!-- ---------- 7 PITFALLS ---------- -->
+<section class="panel" role="tabpanel" id="p7" aria-labelledby="t7" hidden>
+  <h2>Ways this breaks in production</h2>
+  <ul class="clean">
+    <li><strong>The client regenerates the key on retry.</strong> Server-side is flawless; duplicates still appear. Generate once, persist, reuse across the whole retry loop.</li>
+    <li><strong>Keys aren't scoped by tenant.</strong> A guessable key from another account replays <em>their</em> response body to you. A data breach wearing a correctness bug's clothing.</li>
+    <li><strong>Transient 5xx cached as completed.</strong> The operation is now permanently broken and no amount of retrying will fix it.</li>
+    <li><strong>Volatile fields in the fingerprint.</strong> Trace IDs and client clocks make every legitimate retry fail with <code>422</code>. Hash the semantic payload only.</li>
+    <li><strong>Path and method excluded from the fingerprint.</strong> The same key used against two endpoints collides and one replays the other's response.</li>
+    <li><strong>Effect and receipt in separate transactions.</strong> Reintroduces the original ambiguity. See the crash table under Races.</li>
+    <li><strong>No lease.</strong> One OOM kill wedges that operation permanently behind <code>409</code>.</li>
+    <li><strong>No TTL.</strong> The table grows without bound, the index stops fitting in memory, and claim latency degrades until it becomes the outage.</li>
+    <li><strong>Invisible retries in the infrastructure.</strong> Envoy, nginx, ALBs and SDKs retry on connection errors by default. You are already receiving duplicates whether or not you designed for them.</li>
+    <li><strong>Assuming idempotency solves concurrency.</strong> It doesn't. Different keys, different clients, lost update. Use <code>If-Match</code>.</li>
+    <li><strong>Non-idempotent handlers behind idempotent methods.</strong> A <code>PUT</code> that appends to a log violates the contract intermediaries are relying on.</li>
+  </ul>
+
+  <h3>Review checklist</h3>
+  <table>
+    <thead><tr><th>Ask</th><th>Correct answer</th></tr></thead>
+    <tbody>
+      <tr><td>Is the key claimed in one atomic statement?</td><td class="y">yes — no SELECT-then-INSERT</td></tr>
+      <tr><td>Do the effect and the receipt share a transaction?</td><td class="y">yes</td></tr>
+      <tr><td>Is the uniqueness scope (tenant, endpoint, key)?</td><td class="y">yes</td></tr>
+      <tr><td>Does a mismatched fingerprint return 422?</td><td class="y">yes</td></tr>
+      <tr><td>Are 5xx responses released rather than saved?</td><td class="y">yes</td></tr>
+      <tr><td>Does an in-flight duplicate get 409 + Retry-After?</td><td class="y">yes</td></tr>
+      <tr><td>Do in-progress claims carry an expiring lease?</td><td class="y">yes</td></tr>
+      <tr><td>Is there a resource-level unique constraint as backstop?</td><td class="y">yes</td></tr>
+      <tr><td>Are downstream keys derived deterministically?</td><td class="y">yes</td></tr>
+      <tr><td>Is the TTL documented in the public API reference?</td><td class="y">yes</td></tr>
+    </tbody>
+  </table>
+
+  <h3>How to actually test it</h3>
+  <ul class="clean">
+    <li>Fire N identical requests concurrently; assert exactly one effect and N successful responses.</li>
+    <li>Kill the process between the effect and the commit — a fault injection point in the transaction — and assert the retry produces one effect, not two.</li>
+    <li>Replay the same key with a mutated body; assert <code>422</code>.</li>
+    <li>Expire the key, replay; assert a new operation is created and that this matches what you documented.</li>
+    <li>Chaos-test the store: fail over Redis or the database mid-flight and count the effects.</li>
+  </ul>
+</section>
+
+<footer>
+  <span>RFC 9110 · IETF httpapi Idempotency-Key draft · Kafka KIP-98</span>
+  <span>Effectively-once = at-least-once delivery + idempotent processing</span>
+</footer>
+
+</div>
+
+<script>
+/* ================= TABS ================= */
+const tabs=[...document.querySelectorAll('.tab')];
+tabs.forEach((t,i)=>{
+  t.addEventListener('click',()=>select(i));
+  t.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'){select((i+1)%tabs.length);tabs[(i+1)%tabs.length].focus()}
+    if(e.key==='ArrowLeft'){const p=(i-1+tabs.length)%tabs.length;select(p);tabs[p].focus()}
+  });
+});
+function select(i){
+  tabs.forEach((t,j)=>{
+    t.setAttribute('aria-selected',j===i);
+    document.getElementById(t.getAttribute('aria-controls')).hidden=(j!==i);
+  });
+}
+select(0);
+
+/* ================= SIMULATOR ================= */
+let scen='lost', useKey=false, running=false;
+const traceEl=document.getElementById('trace');
+const receiptEl=document.getElementById('receipt');
+const runBtn=document.getElementById('runBtn');
+
+document.querySelectorAll('#scenSeg button').forEach(b=>b.onclick=()=>{
+  if(running)return;
+  scen=b.dataset.scen;
+  document.querySelectorAll('#scenSeg button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+});
+document.querySelectorAll('#keySeg button').forEach(b=>b.onclick=()=>{
+  if(running)return;
+  useKey=b.dataset.key==='on';
+  document.querySelectorAll('#keySeg button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+});
+
+const K='Idempotency-Key: 4f2a91c8…';
+
+const SCRIPTS={
+ 'lost:off':{steps:[
+   ['→','POST /v1/charges  {amount: 5000}'],
+   ['·','server: INSERT charge chg_A1 · captured $50.00','g',{add:['chg_A1','$50.00']}],
+   ['←','201 Created','bad'],
+   ['✕','response lost — client sees a timeout','bad'],
+   ['~','client cannot tell if the charge happened','note'],
+   ['→','POST /v1/charges  {amount: 5000}   ← retry'],
+   ['·','server: INSERT charge chg_A2 · captured $50.00','bad',{add:['chg_A2','$50.00','dupe']}],
+   ['←','201 Created','g']
+ ],verdict:['bad','customer charged twice']},
+
+ 'lost:on':{steps:[
+   ['→','POST /v1/charges  '+K],
+   ['·','claim key → in_progress','g'],
+   ['·','BEGIN · INSERT chg_A1 · save receipt 201 · COMMIT','g',{add:['chg_A1','$50.00']}],
+   ['←','201 Created','bad'],
+   ['✕','response lost — client sees a timeout','bad'],
+   ['→','POST /v1/charges  '+K+'   ← retry, same key'],
+   ['·','key found · state=completed · fingerprint matches','good'],
+   ['←','201 Created   Idempotent-Replayed: true','good',{replay:true}]
+ ],verdict:['ok','charged once · response replayed']},
+
+ 'race:off':{steps:[
+   ['→','POST /v1/charges     (attempt 1)'],
+   ['→','POST /v1/charges     (attempt 2, 3ms later)'],
+   ['·','both handlers pass validation concurrently','g'],
+   ['·','INSERT chg_B1 · captured $50.00','g',{add:['chg_B1','$50.00']}],
+   ['·','INSERT chg_B2 · captured $50.00','bad',{add:['chg_B2','$50.00','dupe']}],
+   ['←','201 · 201','g']
+ ],verdict:['bad','no arbiter — both writes land']},
+
+ 'race:on':{steps:[
+   ['→','POST /v1/charges  '+K+'   (attempt 1)'],
+   ['→','POST /v1/charges  '+K+'   (attempt 2)'],
+   ['·','both run INSERT … ON CONFLICT DO NOTHING','g'],
+   ['·','attempt 1 wins the unique constraint','good'],
+   ['←','attempt 2 → 409 idempotency_key_in_use · Retry-After: 1','g'],
+   ['·','BEGIN · INSERT chg_B1 · save receipt · COMMIT','good',{add:['chg_B1','$50.00']}],
+   ['→','attempt 2 retries after backoff'],
+   ['←','201 Created   Idempotent-Replayed: true','good',{replay:true}]
+ ],verdict:['ok','one capture · loser replays it']},
+
+ 'crash:off':{steps:[
+   ['→','POST /v1/charges'],
+   ['·','INSERT chg_C1 · captured $50.00 · COMMIT','g',{add:['chg_C1','$50.00']}],
+   ['✕','pod OOM-killed before writing the response','bad'],
+   ['~','the effect is durable but nobody knows it','note'],
+   ['→','POST /v1/charges   ← retry'],
+   ['·','INSERT chg_C2 · captured $50.00','bad',{add:['chg_C2','$50.00','dupe']}],
+   ['←','201 Created','g']
+ ],verdict:['bad','no receipt, no memory, double charge']},
+
+ 'crash:on':{steps:[
+   ['→','POST /v1/charges  '+K],
+   ['·','claim key → in_progress · lease 30s','g'],
+   ['·','BEGIN · INSERT chg_C1','g'],
+   ['✕','pod OOM-killed mid-transaction','bad'],
+   ['·','ROLLBACK — charge and receipt both vanish together','good'],
+   ['~','one transaction means there is no half-done state','note'],
+   ['→','POST /v1/charges  '+K+'   ← retry after lease expiry'],
+   ['·','lease stale · claim taken over · BEGIN … COMMIT','good',{add:['chg_C1','$50.00']}],
+   ['←','201 Created','good']
+ ],verdict:['ok','rolled back cleanly, then executed once']}
+};
+
+function resetPanes(){
+  traceEl.innerHTML='';
+  receiptEl.innerHTML='<div class="r-head">ACME PAYMENTS · CAPTURES</div>';
+}
+function pushLine(icon,text,cls){
+  const li=document.createElement('li');
+  const a=document.createElement('span');
+  const b=document.createElement('span');
+  if(cls==='note'){li.innerHTML='';li.className='';const n=document.createElement('li');
+    n.innerHTML='<span class="arrow">'+icon+'</span><span class="note">'+text+'</span>';
+    traceEl.appendChild(n);return;}
+  a.className='arrow';a.textContent=icon;
+  b.className=cls||'';b.textContent=text;
+  li.append(a,b);traceEl.appendChild(li);
+}
+let lines=[],total=0;
+function addCapture(id,amt,dupe){
+  lines.push({id,amt,dupe});
+  total+=50;
+  renderReceipt();
+}
+function renderReceipt(replay,verdict){
+  receiptEl.innerHTML='<div class="r-head">ACME PAYMENTS · CAPTURES</div>';
+  if(!lines.length){receiptEl.innerHTML+='<div class="r-empty">no captures yet</div>';}
+  lines.forEach(l=>{
+    const d=document.createElement('div');
+    d.className='r-line'+(l.dupe?' dupe':'');
+    d.innerHTML='<span>'+l.id+(l.dupe?'  ⚠':'')+'</span><span>'+l.amt+'</span>';
+    receiptEl.appendChild(d);
+  });
+  if(replay){
+    const d=document.createElement('div');
+    d.className='r-line replay';
+    d.innerHTML='<span>replayed receipt</span><span>—</span>';
+    receiptEl.appendChild(d);
+  }
+  const t=document.createElement('div');
+  t.className='r-total';
+  t.innerHTML='<span>TOTAL CAPTURED</span><span>$'+total.toFixed(2)+'</span>';
+  receiptEl.appendChild(t);
+  if(verdict){
+    const s=document.createElement('div');
+    s.className='stamp '+(verdict[0]==='ok'?'ok':'bad');
+    s.textContent=verdict[1];
+    receiptEl.appendChild(s);
+  }
+}
+
+runBtn.onclick=()=>{
+  if(running)return;
+  running=true;runBtn.disabled=true;
+  resetPanes();lines=[];total=0;renderReceipt();
+  const script=SCRIPTS[scen+':'+(useKey?'on':'off')];
+  const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const gap=reduce?0:620;
+  let replayed=false;
+  script.steps.forEach((st,i)=>{
+    setTimeout(()=>{
+      pushLine(st[0],st[1],st[2]);
+      const extra=st[3];
+      if(extra&&extra.add){addCapture(extra.add[0],extra.add[1],extra.add[2]==='dupe');}
+      if(extra&&extra.replay){replayed=true;renderReceipt(true);}
+      if(i===script.steps.length-1){
+        setTimeout(()=>{
+          renderReceipt(replayed,script.verdict);
+          running=false;runBtn.disabled=false;
+        },reduce?0:320);
+      }
+    },i*gap);
+  });
+};
+
+/* ================= STEPPER ================= */
+const STEPS=[
+ {t:'Extract and validate the key',
+  b:'Read <code>Idempotency-Key</code>. Decide your policy up front: require it on mutating endpoints and reject with <code>400</code> when absent, or accept its absence and process normally. Requiring it is stricter and easier to reason about; accepting it is friendlier to existing callers. Bound the length so a hostile client cannot write megabytes into your index.'},
+ {t:'Fingerprint the request',
+  b:'Hash method, path and canonicalised body into a digest you will store with the key. This is what lets you tell a genuine retry from a client that recycled a key for different content. Exclude anything that varies between attempts.'},
+ {t:'Claim the key atomically',
+  b:'A single <code>INSERT … ON CONFLICT</code> writes state <code>in_progress</code> with a lease expiry. If it returns a row you own this operation. If it returns nothing, someone else got there first. Never <code>SELECT</code> then <code>INSERT</code> — that gap is exactly where the duplicate charge is born.'},
+ {t:'If you lost: decide what the caller sees',
+  b:'Load the existing row. Fingerprint mismatch → <code>422</code>, the key was reused for different content. State <code>completed</code> → replay the stored status and body with <code>Idempotent-Replayed: true</code>. State <code>in_progress</code> with a live lease → <code>409</code> with <code>Retry-After</code>. Lease expired → the owner probably died; take over the claim.'},
+ {t:'If you won: execute inside a transaction',
+  b:'<code>BEGIN</code>, then do the real work — create the charge, decrement inventory, whatever the endpoint promises. Everything from here to <code>COMMIT</code> is one atomic unit.'},
+ {t:'Write the receipt in the same transaction',
+  b:'Update the key row to <code>completed</code> with the status code and response body. Same transaction as step 5, no exceptions. Either the effect and its record both exist, or neither does. This single constraint is what makes the whole scheme sound.'},
+ {t:'Commit, then respond',
+  b:'<code>COMMIT</code>, return the response. If the process dies after the commit but before the response reaches the client, the retry finds a completed receipt and replays it — the client gets the right answer late instead of a second charge.'},
+ {t:'Release, don\'t save, on transient failure',
+  b:'Roll back and delete the claim so a retry can genuinely re-run. Deterministic validation errors may be saved as completed; timeouts, deadlocks and <code>5xx</code> must not be, or you have cached a failure permanently.'},
+ {t:'Expire old keys',
+  b:'A background sweep deletes rows past <code>expires_at</code> in indexed batches. Publish the retention window in your API docs — beyond it, a repeated key is a new operation, and callers need to know where that line sits.'}
+];
+let cur=0;
+const dots=document.getElementById('dots'),body=document.getElementById('stepBody');
+STEPS.forEach((s,i)=>{
+  const d=document.createElement('button');
+  d.className='dot';d.textContent=i+1;d.onclick=()=>go(i);
+  dots.appendChild(d);
+});
+function go(i){
+  cur=Math.max(0,Math.min(STEPS.length-1,i));
+  [...dots.children].forEach((d,j)=>d.setAttribute('aria-current',j===cur));
+  body.innerHTML='<h4>'+STEPS[cur].t+'</h4><p>'+STEPS[cur].b+'</p>';
+  document.getElementById('prevStep').disabled=cur===0;
+  document.getElementById('nextStep').disabled=cur===STEPS.length-1;
+}
+document.getElementById('prevStep').onclick=()=>go(cur-1);
+document.getElementById('nextStep').onclick=()=>go(cur+1);
+go(0);
+
+/* ================= CODE TABS ================= */
+const CODE={
+sql:`<span class="c">-- One row per logical operation. Lives in the SAME database</span>
+<span class="c">-- as the business data so the receipt commits with the effect.</span>
+
+CREATE TABLE idempotency_keys (
+  tenant_id        uuid        NOT NULL,
+  endpoint         text        NOT NULL,   <span class="c">-- 'POST /v1/charges'</span>
+  key              text        NOT NULL,
+  request_hash     bytea       NOT NULL,   <span class="c">-- sha256 of the canonical request</span>
+  state            text        NOT NULL,   <span class="c">-- 'in_progress' | 'completed'</span>
+  response_code    int,
+  response_body    jsonb,
+  lease_expires_at timestamptz NOT NULL,   <span class="c">-- &gt; hard request timeout</span>
+  expires_at       timestamptz NOT NULL,   <span class="c">-- retention, e.g. now() + 24h</span>
+  created_at       timestamptz NOT NULL DEFAULT now(),
+
+  <span class="c">-- scope is the security boundary, not just a uniqueness trick</span>
+  PRIMARY KEY (tenant_id, endpoint, key),
+  CHECK (state IN ('in_progress','completed'))
+);
+
+CREATE INDEX idem_sweep ON idempotency_keys (expires_at);
+
+<span class="c">-- Backstop. Even if every key mechanism fails, the database</span>
+<span class="c">-- physically refuses the second charge.</span>
+ALTER TABLE charges ADD CONSTRAINT charges_once
+  UNIQUE (tenant_id, order_reference);`,
+
+go:`<span class="k">func</span> (h *Handler) Charge(w http.ResponseWriter, r *http.Request) {
+    key := r.Header.Get(<span class="s">"Idempotency-Key"</span>)
+    <span class="k">if</span> key == <span class="s">""</span> || len(key) &gt; 255 {
+        writeErr(w, 400, <span class="s">"idempotency_key_required"</span>); <span class="k">return</span>
+    }
+    body, _ := io.ReadAll(io.LimitReader(r.Body, 1&lt;&lt;20))
+    fp := fingerprint(r.Method, r.URL.Path, body)
+
+    <span class="c">// 1. Claim atomically. The ON CONFLICT arm also steals a dead</span>
+    <span class="c">//    lease, so an OOM-killed pod cannot wedge this key forever.</span>
+    <span class="k">var</span> owned bool
+    err := h.db.QueryRow(ctx, \`
+        INSERT INTO idempotency_keys
+            (tenant_id, endpoint, key, request_hash, state,
+             lease_expires_at, expires_at)
+        VALUES ($1,$2,$3,$4,'in_progress',
+                now() + interval '60 seconds',
+                now() + interval '24 hours')
+        ON CONFLICT (tenant_id, endpoint, key) DO UPDATE
+           SET lease_expires_at = now() + interval '60 seconds'
+         WHERE idempotency_keys.state = 'in_progress'
+           AND idempotency_keys.lease_expires_at &lt; now()
+           AND idempotency_keys.request_hash = $4
+        RETURNING true\`,
+        tenant, endpoint, key, fp).Scan(&amp;owned)
+
+    <span class="c">// 2. No row returned: someone else owns it or already finished.</span>
+    <span class="k">if</span> errors.Is(err, pgx.ErrNoRows) {
+        rec := h.load(ctx, tenant, endpoint, key)
+        <span class="k">switch</span> {
+        <span class="k">case</span> !bytes.Equal(rec.Fingerprint, fp):
+            writeErr(w, 422, <span class="s">"key_reused_with_different_payload"</span>)
+        <span class="k">case</span> rec.State == StateCompleted:
+            w.Header().Set(<span class="s">"Idempotent-Replayed"</span>, <span class="s">"true"</span>)
+            w.WriteHeader(rec.ResponseCode)
+            w.Write(rec.ResponseBody)
+        <span class="k">default</span>: <span class="c">// live lease — genuinely in flight</span>
+            w.Header().Set(<span class="s">"Retry-After"</span>, <span class="s">"1"</span>)
+            writeErr(w, 409, <span class="s">"idempotency_key_in_use"</span>)
+        }
+        <span class="k">return</span>
+    }
+    <span class="k">if</span> err != nil { writeErr(w, 500, <span class="s">"internal"</span>); <span class="k">return</span> }
+
+    <span class="c">// 3. We own it. Effect and receipt in ONE transaction.</span>
+    tx, _ := h.db.Begin(ctx)
+    <span class="k">defer</span> tx.Rollback(ctx)
+
+    charge, err := createCharge(ctx, tx, tenant, body)
+    <span class="k">if</span> err != nil {
+        <span class="c">// Transient failure: release the claim so a retry re-runs.</span>
+        <span class="c">// Saving a 5xx here would poison this key permanently.</span>
+        h.release(ctx, tenant, endpoint, key)
+        writeErr(w, 500, <span class="s">"charge_failed"</span>); <span class="k">return</span>
+    }
+    resp, _ := json.Marshal(charge)
+
+    tx.Exec(ctx, \`
+        UPDATE idempotency_keys
+           SET state = 'completed', response_code = 201, response_body = $4
+         WHERE tenant_id=$1 AND endpoint=$2 AND key=$3\`,
+        tenant, endpoint, key, resp)
+
+    <span class="k">if</span> err := tx.Commit(ctx); err != nil {
+        writeErr(w, 500, <span class="s">"internal"</span>); <span class="k">return</span>
+    }
+    w.WriteHeader(201); w.Write(resp)
+}`,
+
+js:`<span class="k">async function</span> charge(req, res) {
+  <span class="k">const</span> key = req.get(<span class="s">'Idempotency-Key'</span>);
+  <span class="k">if</span> (!key || key.length &gt; 255)
+    <span class="k">return</span> res.status(400).json({ error: <span class="s">'idempotency_key_required'</span> });
+
+  <span class="k">const</span> fp = fingerprint(req.method, req.path, req.body);
+  <span class="k">const</span> client = <span class="k">await</span> pool.connect();
+
+  <span class="k">try</span> {
+    <span class="c">// 1. Claim, or steal an expired lease. Single statement.</span>
+    <span class="k">const</span> claim = <span class="k">await</span> client.query(\`
+      INSERT INTO idempotency_keys
+          (tenant_id, endpoint, key, request_hash, state,
+           lease_expires_at, expires_at)
+      VALUES ($1,$2,$3,$4,'in_progress',
+              now() + interval '60 seconds', now() + interval '24 hours')
+      ON CONFLICT (tenant_id, endpoint, key) DO UPDATE
+         SET lease_expires_at = now() + interval '60 seconds'
+       WHERE idempotency_keys.state = 'in_progress'
+         AND idempotency_keys.lease_expires_at &lt; now()
+         AND idempotency_keys.request_hash = $4
+      RETURNING 1\`, [tenant, endpoint, key, fp]);
+
+    <span class="c">// 2. Lost the claim — replay, reject, or ask them to wait.</span>
+    <span class="k">if</span> (claim.rowCount === 0) {
+      <span class="k">const</span> { rows: [rec] } = <span class="k">await</span> client.query(
+        <span class="s">'SELECT * FROM idempotency_keys WHERE tenant_id=$1 AND endpoint=$2 AND key=$3'</span>,
+        [tenant, endpoint, key]);
+
+      <span class="k">if</span> (!rec.request_hash.equals(fp))
+        <span class="k">return</span> res.status(422).json({ error: <span class="s">'key_reused_with_different_payload'</span> });
+
+      <span class="k">if</span> (rec.state === <span class="s">'completed'</span>)
+        <span class="k">return</span> res.set(<span class="s">'Idempotent-Replayed'</span>, <span class="s">'true'</span>)
+                  .status(rec.response_code).json(rec.response_body);
+
+      <span class="k">return</span> res.set(<span class="s">'Retry-After'</span>, <span class="s">'1'</span>)
+                .status(409).json({ error: <span class="s">'idempotency_key_in_use'</span> });
+    }
+
+    <span class="c">// 3. We own it. One transaction for effect + receipt.</span>
+    <span class="k">await</span> client.query(<span class="s">'BEGIN'</span>);
+    <span class="k">const</span> charge = <span class="k">await</span> createCharge(client, tenant, req.body);
+    <span class="k">await</span> client.query(\`
+      UPDATE idempotency_keys
+         SET state='completed', response_code=201, response_body=$4
+       WHERE tenant_id=$1 AND endpoint=$2 AND key=$3\`,
+      [tenant, endpoint, key, charge]);
+    <span class="k">await</span> client.query(<span class="s">'COMMIT'</span>);
+
+    res.status(201).json(charge);
+  } <span class="k">catch</span> (e) {
+    <span class="k">await</span> client.query(<span class="s">'ROLLBACK'</span>);
+    <span class="c">// Release, never persist, on transient failure.</span>
+    <span class="k">await</span> release(tenant, endpoint, key);
+    res.status(500).json({ error: <span class="s">'charge_failed'</span> });
+  } <span class="k">finally</span> { client.release(); }
+}`
+};
+const codeBox=document.getElementById('codeBox');
+document.querySelectorAll('#codetabs button').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('#codetabs button').forEach(x=>x.setAttribute('aria-selected',x===b));
+    codeBox.innerHTML=CODE[b.dataset.code];
+  };
+});
+codeBox.innerHTML=CODE.sql;
+</script>
+</body>
+</html>

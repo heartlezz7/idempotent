@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "queue_messages — Delivery Lifecycle",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Happy path",
+        "focus": [
+          "published",
+          "pending",
+          "leased",
+          "committed",
+          "done"
+        ],
+        "note": "Claim, commit the effect, and only then ack."
+      },
+      {
+        "id": "crash-windows",
+        "label": "Crash windows",
+        "focus": [
+          "leased",
+          "committed",
+          "rolled_back",
+          "unacked"
+        ],
+        "note": "Both crash points stay leased until the lease expires, then a re-claim runs without a double effect."
+      },
+      {
+        "id": "replay",
+        "label": "Broker replay",
+        "focus": [
+          "done",
+          "replayed"
+        ],
+        "note": "/_duplicate resets status to pending; the next claim hits the guard or inbox and acks."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Delivery rail"
+    },
+    {
+      "id": "faults",
+      "label": "Crash + replay windows"
+    }
+  ],
+  "states": [
+    {
+      "id": "published",
+      "type": "start",
+      "label": "Published",
+      "sublabel": "dedupe_key checked",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "POST /publish"
+    },
+    {
+      "id": "pending",
+      "type": "waiting",
+      "label": "Pending",
+      "sublabel": "available_at ≤ now()",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "pending"
+    },
+    {
+      "id": "leased",
+      "type": "active",
+      "label": "Leased",
+      "sublabel": "SKIP LOCKED claim",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "leased"
+    },
+    {
+      "id": "committed",
+      "type": "decision",
+      "label": "Effect committed",
+      "sublabel": "guard or inbox",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "1 tx"
+    },
+    {
+      "id": "done",
+      "type": "success",
+      "label": "Done",
+      "sublabel": "acked",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "done"
+    },
+    {
+      "id": "rolled_back",
+      "type": "failure",
+      "label": "Crashed pre-commit",
+      "sublabel": "tx rolled back",
+      "lane": "faults",
+      "col": 0,
+      "tag": "crash_before_commit"
+    },
+    {
+      "id": "unacked",
+      "type": "failure",
+      "label": "Committed, no ack",
+      "sublabel": "redelivery skipped",
+      "lane": "faults",
+      "col": 1,
+      "tag": "crash_after_commit"
+    },
+    {
+      "id": "replayed",
+      "type": "failure",
+      "label": "Replayed",
+      "sublabel": "broker redelivers",
+      "lane": "faults",
+      "col": 2,
+      "tag": "/_duplicate"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "published",
+      "to": "pending"
+    },
+    {
+      "from": "pending",
+      "to": "leased",
+      "label": "claim"
+    },
+    {
+      "from": "leased",
+      "to": "committed",
+      "label": "commit",
+      "labelDy": -25
+    },
+    {
+      "from": "committed",
+      "to": "done",
+      "label": "ack",
+      "variant": "emphasis"
+    },
+    {
+      "from": "leased",
+      "to": "rolled_back",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "rolled_back",
+      "to": "leased",
+      "label": "lease expires",
+      "variant": "security",
+      "labelDx": 46
+    },
+    {
+      "from": "committed",
+      "to": "unacked",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "unacked",
+      "to": "committed",
+      "label": "re-claim · no-op",
+      "variant": "security",
+      "labelDx": 46
+    },
+    {
+      "from": "done",
+      "to": "replayed",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "replayed",
+      "to": "done",
+      "label": "re-claim · skip",
+      "variant": "security",
+      "labelDx": 46
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "At-least-once",
+      "items": [
+        "A lease can expire and be reclaimed by another worker",
+        "Release returns a message to pending on a transient failure",
+        "Ack only after the effect commits"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Crash windows",
+      "items": [
+        "Before commit: effect and outbox/inbox roll back together",
+        "After commit, before ack: redelivery is a guarded no-op"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Why it holds",
+      "items": [
+        "Orders: WHERE orders.version < EXCLUDED.version",
+        "Notifications: inbox_processed (consumer, message_id) PK"
+      ]
+    }
+  ]
+}

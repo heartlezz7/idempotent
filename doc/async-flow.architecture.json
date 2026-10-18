@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Idempotency Lab — Async Queue Flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "order-path",
+        "label": "Order path",
+        "focus": [
+          "producer",
+          "orders-topic",
+          "order-consumer",
+          "order-db"
+        ],
+        "note": "Producer dedupe, atomic claim, then a version-guarded upsert committed with its outbox row."
+      },
+      {
+        "id": "outbox-relay",
+        "label": "Outbox relay",
+        "focus": [
+          "order-db",
+          "relay",
+          "notif-topic"
+        ],
+        "note": "The relay derives dedupe_key outbox:{id}, so a relay retry republishes the same message."
+      },
+      {
+        "id": "inbox-path",
+        "label": "Inbox path",
+        "focus": [
+          "notif-topic",
+          "notif-consumer",
+          "inbox-db"
+        ],
+        "note": "Notifications are not naturally idempotent, so the inbox claim commits with the send."
+      },
+      {
+        "id": "chaos",
+        "label": "Chaos controls",
+        "focus": [
+          "lab",
+          "orders-topic"
+        ],
+        "note": "Force a redelivery or expire a lease to prove the safe consumers absorb duplicates."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "lab",
+      "type": "frontend",
+      "label": "Lab control plane",
+      "sublabel": "gin :8080",
+      "tag": "/_duplicate · /_expire_lease",
+      "pos": [
+        300,
+        40
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "producer",
+      "type": "external",
+      "label": "Producer",
+      "sublabel": "POST /publish",
+      "pos": [
+        40,
+        220
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "orders-topic",
+      "type": "messagebus",
+      "label": "queue_messages",
+      "sublabel": "topic: orders",
+      "pos": [
+        310,
+        220
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "order-consumer",
+      "type": "backend",
+      "label": "Safe order consumer",
+      "sublabel": "monotonic version guard",
+      "pos": [
+        580,
+        220
+      ],
+      "size": [
+        190,
+        64
+      ]
+    },
+    {
+      "id": "order-db",
+      "type": "database",
+      "label": "orders + outbox_events",
+      "sublabel": "one transaction",
+      "pos": [
+        870,
+        220
+      ],
+      "size": [
+        200,
+        64
+      ]
+    },
+    {
+      "id": "relay",
+      "type": "backend",
+      "label": "Outbox relay",
+      "sublabel": "POST /relay/run",
+      "pos": [
+        885,
+        420
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "notif-topic",
+      "type": "messagebus",
+      "label": "queue_messages",
+      "sublabel": "topic: notifications",
+      "pos": [
+        590,
+        420
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "notif-consumer",
+      "type": "backend",
+      "label": "Safe notification consumer",
+      "sublabel": "inbox pattern",
+      "pos": [
+        290,
+        420
+      ],
+      "size": [
+        210,
+        64
+      ]
+    },
+    {
+      "id": "inbox-db",
+      "type": "database",
+      "label": "inbox_processed",
+      "sublabel": "+ notifications_sent",
+      "pos": [
+        30,
+        420
+      ],
+      "size": [
+        190,
+        64
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "publish",
+      "from": "producer",
+      "to": "orders-topic",
+      "label": "dedupe_key",
+      "variant": "emphasis"
+    },
+    {
+      "id": "claim-orders",
+      "from": "orders-topic",
+      "to": "order-consumer",
+      "label": "SKIP LOCKED",
+      "variant": "emphasis"
+    },
+    {
+      "id": "guarded-upsert",
+      "from": "order-consumer",
+      "to": "order-db",
+      "label": "upsert + outbox",
+      "variant": "emphasis"
+    },
+    {
+      "id": "poll-outbox",
+      "from": "order-db",
+      "to": "relay",
+      "label": "unpublished rows",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [
+        970,
+        352
+      ]
+    },
+    {
+      "id": "relay-publish",
+      "from": "relay",
+      "to": "notif-topic",
+      "label": "outbox:{id}"
+    },
+    {
+      "id": "claim-notif",
+      "from": "notif-topic",
+      "to": "notif-consumer",
+      "label": "claim"
+    },
+    {
+      "id": "inbox-claim",
+      "from": "notif-consumer",
+      "to": "inbox-db",
+      "label": "inbox + send"
+    },
+    {
+      "id": "chaos",
+      "from": "lab",
+      "to": "orders-topic",
+      "label": "redeliver",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Producer side",
+      "items": [
+        "dedupe_key unique per (topic, dedupe_key)",
+        "Same key + different payload → 422",
+        "Claim is one UPDATE … FOR UPDATE SKIP LOCKED"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Consumer side",
+      "items": [
+        "Orders: WHERE version < incoming, no dedup table",
+        "Notifications: inbox_processed ON CONFLICT DO NOTHING",
+        "Ack only after the effect commits"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Outbox & chaos",
+      "items": [
+        "State change + outbox row commit together",
+        "Relay dedupe_key outbox:{id} is deterministic",
+        "?chaos=crash_before_commit | crash_after_commit_before_ack"
+      ]
+    }
+  ]
+}
