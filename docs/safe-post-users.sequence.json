@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "POST /safe/users — Idempotency-Key Round Trip",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [960, 920],
+    "views": [
+      { "id": "claim", "label": "Atomic claim", "focus": ["client", "middleware", "postgres"], "note": "One INSERT … ON CONFLICT decides ownership; there is no SELECT-then-INSERT gap." },
+      { "id": "one-commit", "label": "Effect + receipt, one commit", "focus": ["middleware", "handler", "postgres"], "note": "The handler writes through DBFrom, so the user row and the receipt commit together." },
+      { "id": "replay", "label": "Retry replays", "focus": ["client", "middleware", "postgres"], "note": "The lost claim loads the completed receipt and replays it with Idempotent-Replayed: true." }
+    ]
+  },
+  "participants": [
+    { "id": "client", "type": "external", "label": "Client", "sublabel": "retry loop" },
+    { "id": "middleware", "type": "security", "label": "Idempotency middleware", "sublabel": "middleware.Middleware" },
+    { "id": "handler", "type": "backend", "label": "CreateUser", "sublabel": "same handler as /naive" },
+    { "id": "postgres", "type": "database", "label": "Postgres", "sublabel": "idempotency_keys + users" }
+  ],
+  "segments": [
+    { "from": 150, "to": 580, "label": "First attempt" },
+    { "from": 596, "to": 850, "label": "Retry, same key" }
+  ],
+  "messages": [
+    { "from": "client", "to": "middleware", "y": 180, "label": "POST + Idempotency-Key", "variant": "emphasis", "note": "Fingerprint = sha256(method ‖ path ‖ body); scope = (X-Api-Key, method + route, key)." },
+    { "from": "middleware", "to": "postgres", "y": 222, "label": "claimSQL ON CONFLICT", "variant": "emphasis" },
+    { "from": "postgres", "to": "middleware", "y": 264, "label": "RETURNING true", "variant": "return" },
+    { "from": "middleware", "to": "postgres", "y": 306, "label": "BEGIN", "variant": "default" },
+    { "from": "middleware", "to": "handler", "y": 348, "label": "c.Next() · tx in ctx", "variant": "default" },
+    { "from": "handler", "to": "postgres", "y": 390, "label": "INSERT users + audit_log", "variant": "default", "note": "Written through DBFrom(c, pool), so it lands in the middleware's transaction." },
+    { "from": "handler", "to": "middleware", "y": 432, "label": "201 into buffer", "variant": "return" },
+    { "from": "middleware", "to": "postgres", "y": 474, "label": "completeSQL receipt", "variant": "emphasis" },
+    { "from": "middleware", "to": "postgres", "y": 516, "label": "COMMIT", "variant": "emphasis" },
+    { "from": "middleware", "to": "client", "y": 558, "label": "201 Created (lost)", "variant": "dashed", "note": "Flushed only after commit; here the response never reaches the client." },
+    { "from": "client", "to": "middleware", "y": 626, "label": "same key + body", "variant": "default" },
+    { "from": "middleware", "to": "postgres", "y": 668, "label": "claimSQL", "variant": "default" },
+    { "from": "postgres", "to": "middleware", "y": 710, "label": "0 rows", "variant": "return" },
+    { "from": "middleware", "to": "postgres", "y": 752, "label": "loadSQL", "variant": "default" },
+    { "from": "postgres", "to": "middleware", "y": 794, "label": "completed receipt", "variant": "return" },
+    { "from": "middleware", "to": "client", "y": 836, "label": "201 · Idempotent-Replayed", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "middleware", "from": 174, "to": 566, "type": "security" },
+    { "participant": "postgres", "from": 216, "to": 524, "type": "database" },
+    { "participant": "handler", "from": 342, "to": 440, "type": "backend" },
+    { "participant": "middleware", "from": 620, "to": 844, "type": "security" },
+    { "participant": "postgres", "from": 662, "to": 802, "type": "database" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Lost claim outcomes", "items": ["completed + same fingerprint → replay stored response", "different fingerprint → 422 key_reused_with_different_payload", "still in_progress → 409 + Retry-After: 1"] },
+    { "dot": "rose", "title": "Failure handling", "items": ["5xx or c.Errors → rollback + releaseSQL deletes the claim", "4xx is saved as completed (deterministic)", "Expired 60s lease + same fingerprint → claim is stolen"] },
+    { "dot": "emerald", "title": "Why it holds", "items": ["Response buffered until COMMIT", "Receipt and user row share one transaction", "Scope (tenant, endpoint, key) is a security boundary"] }
+  ]
+}

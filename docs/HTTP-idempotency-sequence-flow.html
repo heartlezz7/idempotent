@@ -208,6 +208,15 @@ footer{margin-top:60px;padding-top:16px;border-top:2px solid var(--ink);
   </div>
 </section>
 
+<section class="block">
+  <h2>Diagrams of this lab</h2>
+  <p>The middleware row in the table above is <code>src/route/middleware/idempotent.go</code>. Two interactive diagrams show exactly what it does:</p>
+  <ul>
+    <li><a href="safe-post-users.html" style="color:var(--seal)"><strong>POST /safe/users round trip</strong></a> — sequence. Covers the single-statement <code>claimSQL</code> claim, then the handler writing through <code>DBFrom</code> inside the middleware's transaction, with the receipt committed alongside it. A retry with the same key then gets the stored response replayed with <code>Idempotent-Replayed: true</code>.</li>
+    <li><a href="idempotency-key.html" style="color:var(--seal)"><strong><code>idempotency_keys</code> row lifecycle</strong></a> — the states of a key row: claimed <code>in_progress</code> under a 60s lease, <code>completed</code> once the receipt commits, and swept after the 24h TTL. A 5xx releases the claim so the retry genuinely re-runs.</li>
+  </ul>
+</section>
+
 <footer>RFC 9110 method semantics · nginx proxy_next_upstream · Envoy retry policy · Go net/http isReplayable</footer>
 </div>
 

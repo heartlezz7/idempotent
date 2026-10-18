@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "idempotency_keys — Row Lifecycle",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Happy path",
+        "focus": [
+          "absent",
+          "in_progress",
+          "handled",
+          "completed",
+          "swept"
+        ],
+        "note": "Claim, run the handler in one transaction, commit the receipt, sweep after 24h."
+      },
+      {
+        "id": "release",
+        "label": "5xx release",
+        "focus": [
+          "handled",
+          "released",
+          "in_progress"
+        ],
+        "note": "A 5xx is never saved: the claim is deleted so the retry genuinely re-runs."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Key rail"
+    },
+    {
+      "id": "faults",
+      "label": "Recovery"
+    }
+  ],
+  "states": [
+    {
+      "id": "absent",
+      "type": "start",
+      "label": "No row",
+      "sublabel": "first request",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "new key"
+    },
+    {
+      "id": "in_progress",
+      "type": "active",
+      "label": "in_progress",
+      "sublabel": "claimSQL won",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "60s lease"
+    },
+    {
+      "id": "handled",
+      "type": "decision",
+      "label": "Handler done",
+      "sublabel": "status < 500?",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "buffered"
+    },
+    {
+      "id": "completed",
+      "type": "success",
+      "label": "completed",
+      "sublabel": "receipt committed",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "replayable"
+    },
+    {
+      "id": "swept",
+      "type": "neutral",
+      "label": "Swept",
+      "sublabel": "expires_at passed",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "24h TTL"
+    },
+    {
+      "id": "released",
+      "type": "failure",
+      "label": "Released",
+      "sublabel": "releaseSQL deletes",
+      "lane": "faults",
+      "col": 0,
+      "tag": "5xx"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "absent",
+      "to": "in_progress",
+      "label": "claim"
+    },
+    {
+      "from": "in_progress",
+      "to": "handled",
+      "label": "run"
+    },
+    {
+      "from": "handled",
+      "to": "completed",
+      "label": "commit",
+      "variant": "emphasis",
+      "labelDy": -25
+    },
+    {
+      "from": "completed",
+      "to": "swept",
+      "label": "/_sweep",
+      "labelDy": -25
+    },
+    {
+      "from": "handled",
+      "to": "released",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "released",
+      "to": "in_progress",
+      "label": "retry re-claims",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Losing the claim",
+      "items": [
+        "completed + same fingerprint → replay",
+        "different fingerprint → 422",
+        "in_progress, lease live → 409 + Retry-After"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Recovery",
+      "items": [
+        "5xx or commit failure → release, never save",
+        "Expired 60s lease + same fingerprint → next request takes over",
+        "4xx is saved: deterministic, safe to replay",
+        "No fencing token: resource constraints are the backstop"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Lab controls",
+      "items": [
+        "POST /_sweep deletes expired rows",
+        "POST /_expire_keys forces expiry for TTL tests"
+      ]
+    }
+  ]
+}
